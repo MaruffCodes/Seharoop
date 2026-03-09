@@ -43,9 +43,10 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true, minlength: 6 },
   bloodGroup: {
     type: String,
-    enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+    enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', null],
     default: null
   },
+  hasMedicalForm: { type: Boolean, default: false }, // Add this field
 
   // Existing fields
   isDiabetic: { type: Boolean, default: false },
@@ -70,10 +71,9 @@ const userSchema = new mongoose.Schema({
 
   medicalHistory: [medicalHistorySchema],
 
-  // ✅ NEW FIELDS
-  medicationAllergies: [{ type: String }],  // e.g., Penicillin, Sulfa drugs
-  comorbidConditions: [{ type: String }],   // e.g., Hypertension, Diabetes
-  chronicDiseases: [{ type: String }],      // e.g., Asthma, Thyroid
+  medicationAllergies: [{ type: String }],
+  comorbidConditions: [{ type: String }],
+  chronicDiseases: [{ type: String }],
   previousInterventions: [{
     name: String,
     date: Date,
@@ -92,7 +92,7 @@ const userSchema = new mongoose.Schema({
   }],
   bloodThinnerHistory: [{
     name: String,
-    type: { type: String },   // e.g., Anticoagulant, Antiplatelet
+    type: { type: String },
     duration: String,
     reason: String
   }],
@@ -115,7 +115,7 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // 🔐 Hash password before saving
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   try {
     const salt = await bcrypt.genSalt(12);
@@ -127,12 +127,12 @@ userSchema.pre('save', async function(next) {
 });
 
 // 🔐 Compare password
-userSchema.methods.comparePassword = async function(candidatePassword) {
+userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
 // 🚫 Remove password from output
-userSchema.methods.toJSON = function() {
+userSchema.methods.toJSON = function () {
   const userObject = this.toObject();
   delete userObject.password;
   return userObject;

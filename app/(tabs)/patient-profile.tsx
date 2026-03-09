@@ -8,11 +8,35 @@ import {
   Alert,
   Image,
   ImageSourcePropType,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User, Mail, Hash, QrCode, CreditCard as Edit3, Shield, Activity, Heart, Zap } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import {
+  User,
+  Mail,
+  Hash,
+  QrCode,
+  CreditCard as Edit3,
+  Shield,
+  Activity,
+  Heart,
+  Zap,
+  MapPin,
+  Phone,
+  Calendar,
+  AlertCircle,
+  Pill,
+  Scissors,
+  AlertTriangle,
+  PhoneCall,
+  X,
+  FileText
+} from 'lucide-react-native';
 import ApiService from '../../services/api';
+import PatientMedicalForm from './patient-medicalForm';
 
 interface UserData {
   name: string;
@@ -27,7 +51,14 @@ interface UserData {
   dateOfBirth?: string;
   gender?: string;
   phone?: string;
-  address?: any;
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    pincode?: string;
+    country?: string;
+  };
+  hasMedicalForm?: boolean;
 }
 
 interface ApiResponse {
@@ -37,6 +68,8 @@ interface ApiResponse {
 export default function PatientProfile(): JSX.Element {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [medicalFormModalVisible, setMedicalFormModalVisible] = useState<boolean>(false);
+  const router = useRouter();
 
   useEffect(() => {
     loadUserData();
@@ -47,12 +80,10 @@ export default function PatientProfile(): JSX.Element {
       setLoading(true);
       const response = await ApiService.getPatientProfile() as ApiResponse;
       setUserData(response.data);
-      
-      // Also store in AsyncStorage for offline access
+
       await AsyncStorage.setItem('userData', JSON.stringify(response.data));
     } catch (error) {
       console.log('Error loading user data:', error);
-      // Fallback to AsyncStorage if API fails
       const storedData = await AsyncStorage.getItem('userData');
       if (storedData) {
         setUserData(JSON.parse(storedData));
@@ -74,10 +105,12 @@ export default function PatientProfile(): JSX.Element {
       [
         { text: 'OK' },
         {
-          text: 'Save QR Code',
+          text: 'View Full QR',
           onPress: (): void => {
-            // Here you could implement saving the QR code to photos
-            Alert.alert('Info', 'QR code save functionality would be implemented here');
+            router.push({
+              pathname: '/(tabs)/FullScreenQR',
+              params: { qrCodeUrl: userData.qrCode }
+            });
           }
         }
       ]
@@ -90,11 +123,11 @@ export default function PatientProfile(): JSX.Element {
     const today = new Date();
     let age = today.getFullYear() - dob.getFullYear();
     const monthDiff = today.getMonth() - dob.getMonth();
-    
+
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
       age--;
     }
-    
+
     return `${age} years`;
   };
 
@@ -102,7 +135,8 @@ export default function PatientProfile(): JSX.Element {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
-          <Text>Loading profile...</Text>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.loadingText}>Loading profile...</Text>
         </View>
       </SafeAreaView>
     );
@@ -110,14 +144,12 @@ export default function PatientProfile(): JSX.Element {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.title}>My Profile</Text>
-          <TouchableOpacity style={styles.editButton}>
-            <Edit3 size={20} color="#2563EB" />
-          </TouchableOpacity>
         </View>
 
+        {/* Profile Header Card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatar}>
@@ -128,9 +160,56 @@ export default function PatientProfile(): JSX.Element {
           </View>
         </View>
 
+        {/* MEDICAL FORM SECTION - DEDICATED AND EDITABLE */}
+        <View style={styles.medicalFormSection}>
+          <View style={styles.medicalFormHeader}>
+            <View style={styles.medicalFormTitleContainer}>
+              <FileText size={24} color="#2563EB" />
+              <Text style={styles.medicalFormTitle}>Medical Form</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.editMedicalFormButton}
+              onPress={() => setMedicalFormModalVisible(true)}
+            >
+              <Edit3 size={20} color="#FFFFFF" />
+              <Text style={styles.editMedicalFormButtonText}>
+                {userData?.hasMedicalForm ? 'Edit Form' : 'Complete Form'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.medicalFormPreview}>
+            <Text style={styles.medicalFormPreviewText}>
+              {userData?.hasMedicalForm
+                ? 'Your medical information has been recorded. Tap "Edit Form" to update your details.'
+                : 'You haven\'t completed your medical form yet. Tap "Complete Form" to add your medical information.'}
+            </Text>
+            <View style={styles.medicalFormStats}>
+              <View style={styles.statItem}>
+                <Heart size={16} color="#DC2626" />
+                <Text style={styles.statText}>
+                  Blood: {userData?.bloodGroup || 'Not set'}
+                </Text>
+              </View>
+              <View style={styles.statItem}>
+                <Activity size={16} color="#059669" />
+                <Text style={styles.statText}>
+                  Diabetic: {userData?.isDiabetic ? 'Yes' : 'No'}
+                </Text>
+              </View>
+              <View style={styles.statItem}>
+                <Zap size={16} color="#2563EB" />
+                <Text style={styles.statText}>
+                  Thyroid: {userData?.hasThyroid ? 'Yes' : 'No'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        {/* Personal Information */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Personal Information</Text>
-          
           <View style={styles.infoCard}>
             <View style={styles.infoRow}>
               <View style={styles.infoIconContainer}>
@@ -158,11 +237,11 @@ export default function PatientProfile(): JSX.Element {
 
             <View style={styles.infoRow}>
               <View style={styles.infoIconContainer}>
-                <Hash size={20} color="#6B7280" />
+                <Phone size={20} color="#6B7280" />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Patient ID</Text>
-                <Text style={styles.infoValue}>{userData?.patientId || 'Not assigned'}</Text>
+                <Text style={styles.infoLabel}>Phone</Text>
+                <Text style={styles.infoValue}>{userData?.phone || 'Not provided'}</Text>
               </View>
             </View>
 
@@ -171,7 +250,7 @@ export default function PatientProfile(): JSX.Element {
                 <View style={styles.divider} />
                 <View style={styles.infoRow}>
                   <View style={styles.infoIconContainer}>
-                    <Activity size={20} color="#6B7280" />
+                    <Calendar size={20} color="#6B7280" />
                   </View>
                   <View style={styles.infoContent}>
                     <Text style={styles.infoLabel}>Age</Text>
@@ -180,27 +259,12 @@ export default function PatientProfile(): JSX.Element {
                 </View>
               </>
             )}
-
-            {userData?.phone && (
-              <>
-                <View style={styles.divider} />
-                <View style={styles.infoRow}>
-                  <View style={styles.infoIconContainer}>
-                    <Activity size={20} color="#6B7280" />
-                  </View>
-                  <View style={styles.infoContent}>
-                    <Text style={styles.infoLabel}>Phone</Text>
-                    <Text style={styles.infoValue}>{userData.phone}</Text>
-                  </View>
-                </View>
-              </>
-            )}
           </View>
         </View>
 
+        {/* Quick Medical Info */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Medical Information</Text>
-          
+          <Text style={styles.sectionTitle}>Quick Medical Info</Text>
           <View style={styles.medicalGrid}>
             <View style={styles.medicalCard}>
               <Heart size={24} color="#DC2626" />
@@ -226,13 +290,14 @@ export default function PatientProfile(): JSX.Element {
           </View>
         </View>
 
+        {/* QR Code Access */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>QR Code Access</Text>
-          
+
           <TouchableOpacity style={styles.qrButton} onPress={showQRCode}>
             {userData?.qrCode ? (
-              <Image 
-                source={{ uri: userData.qrCode } as ImageSourcePropType} 
+              <Image
+                source={{ uri: userData.qrCode } as ImageSourcePropType}
                 style={styles.qrImage}
                 resizeMode="contain"
               />
@@ -250,9 +315,10 @@ export default function PatientProfile(): JSX.Element {
           </TouchableOpacity>
         </View>
 
+        {/* Privacy & Security */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Privacy & Security</Text>
-          
+
           <View style={styles.securityCard}>
             <Shield size={24} color="#059669" />
             <View style={styles.securityContent}>
@@ -264,6 +330,38 @@ export default function PatientProfile(): JSX.Element {
           </View>
         </View>
       </ScrollView>
+
+      {/* Medical Form Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={medicalFormModalVisible}
+        onRequestClose={() => setMedicalFormModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Medical Form</Text>
+              <TouchableOpacity onPress={() => setMedicalFormModalVisible(false)}>
+                <X size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <PatientMedicalForm />
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setMedicalFormModalVisible(false)}
+              >
+                <Text style={styles.modalCloseButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -282,6 +380,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#64748B',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -292,11 +395,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     color: '#1E293B',
-  },
-  editButton: {
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: '#EFF6FF',
   },
   profileCard: {
     backgroundColor: '#FFFFFF',
@@ -333,14 +431,87 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
+  // Medical Form Section Styles
+  medicalFormSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 2,
+    borderColor: '#2563EB',
+  },
+  medicalFormHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  medicalFormTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  medicalFormTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  editMedicalFormButton: {
+    backgroundColor: '#2563EB',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 6,
+  },
+  editMedicalFormButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  medicalFormPreview: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+  },
+  medicalFormPreviewText: {
+    fontSize: 14,
+    color: '#4B5563',
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  medicalFormStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+  },
+  statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  statText: {
+    fontSize: 12,
+    color: '#1E293B',
+    fontWeight: '500',
+  },
   section: {
     marginBottom: 24,
   },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#1E293B',
+    color: '#2563EB',
     marginBottom: 16,
+    textTransform: 'uppercase',
   },
   infoCard: {
     backgroundColor: '#FFFFFF',
@@ -428,8 +599,8 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   qrImage: {
-    width: 32,
-    height: 32,
+    width: 48,
+    height: 48,
   },
   qrButtonContent: {
     marginLeft: 16,
@@ -471,5 +642,56 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 4,
     lineHeight: 20,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '95%',
+    maxHeight: '90%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  modalBody: {
+    padding: 20,
+    maxHeight: '70%',
+  },
+  modalFooter: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    alignItems: 'flex-end',
+  },
+  modalCloseButton: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  modalCloseButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4B5563',
   },
 });

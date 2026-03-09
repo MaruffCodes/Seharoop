@@ -1,54 +1,63 @@
 const express = require('express');
+const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const { auth } = require('../middleware/auth');
+const fs = require('fs-extra');
+const { v4: uuidv4 } = require('uuid');
+const { auth, isPatient } = require('../middleware/auth');
+const ProcessingQueue = require('../models/ProcessingQueue');
 
-const router = express.Router();
+// Ensure upload directories exist
+const uploadDir = path.join(__dirname, '../uploads');
+const tempDir = path.join(__dirname, '../uploads/temp');
 
-// Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+fs.ensureDirSync(uploadDir);
+fs.ensureDirSync(tempDir);
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, tempDir);
   },
   filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${extension}`);
+    const uniqueId = uuidv4();
+    const ext = path.extname(file.originalname);
+    cb(null, `${uniqueId}${ext}`);
   }
 });
 
-// File filter
 const fileFilter = (req, file, cb) => {
-  // Allow images and PDFs
-  const allowedTypes = /jpeg|jpg|png|gif|pdf/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
+  const allowedTypes = [
+    'application/pdf',
+    'text/plain',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/msword',
+    'image/jpeg',
+    'image/png',
+    'image/jpg'
+  ];
 
-  if (mimetype && extname) {
-    return cb(null, true);
+  const allowedExtensions = ['.pdf', '.txt', '.doc', '.docx', '.jpg', '.jpeg', '.png'];
+
+  const ext = path.extname(file.originalname).toLowerCase();
+
+  if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
+    cb(null, true);
   } else {
-    cb(new Error('Only images (JPEG, JPG, PNG, GIF) and PDF files are allowed'));
+    cb(new Error('Invalid file type. Only PDF, TXT, DOCX, and images are allowed.'), false);
   }
 };
 
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 // 10MB default
+    fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: fileFilter
 });
 
-// Upload single file
-router.post('/single', auth, upload.single('document'), (req, res) => {
+// Single file upload
+router.post('/single', auth, isPatient, upload.single('document'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
@@ -57,31 +66,63 @@ router.post('/single', auth, upload.single('document'), (req, res) => {
       });
     }
 
-    const fileData = {
-      filename: req.file.filename,
+    console.log('📁 File uploaded:', req.file.originalname);
+
+    const fileInfo = {
+      fileId: req.file.filename.split('.')[0],
       originalName: req.file.originalname,
+      filename: req.file.filename,
       path: req.file.path,
-      mimetype: req.file.mimetype,
       size: req.file.size,
-      uploadDate: new Date()
+      mimetype: req.file.mimetype,
+      userId: req.user._id
     };
 
-    res.json({
-      success: true,
-      message: 'File uploaded successfully',
-      data: fileData
+    // Add to processing queue
+    const queueItem = new ProcessingQueue({
+      fileId: fileInfo.fileId,
+      userId: req.user._id,
+      fileName: fileInfo.originalName,
+      fileType: fileInfo.mimetype,
+      fileSize: fileInfo.size,
+      filePath: fileInfo.path,
+      status: 'pending',
+      priority: 'normal',
+      createdAt: new Date()
     });
+
+    await queueItem.save();
+
+    console.log('📥 Added to queue:', queueItem._id);
+
+    res.status(201).json({
+      success: true,
+      message: 'File uploaded successfully and queued for processing',
+      data: {
+        fileId: fileInfo.fileId,
+        fileName: fileInfo.originalName,
+        queueId: queueItem._id,
+        status: 'pending'
+      }
+    });
+
   } catch (error) {
-    console.error('File upload error:', error);
+    console.error('❌ Upload error:', error);
+
+    // Clean up file if error occurred
+    if (req.file) {
+      await fs.remove(req.file.path);
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Server error during file upload'
+      message: error.message || 'Failed to upload file'
     });
   }
 });
 
-// Upload multiple files
-router.post('/multiple', auth, upload.array('documents', 10), (req, res) => {
+// Multiple files upload
+router.post('/multiple', auth, isPatient, upload.array('documents', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({
@@ -90,105 +131,137 @@ router.post('/multiple', auth, upload.array('documents', 10), (req, res) => {
       });
     }
 
-    const filesData = req.files.map(file => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      path: file.path,
-      mimetype: file.mimetype,
-      size: file.size,
-      uploadDate: new Date()
-    }));
+    const queueItems = [];
 
-    res.json({
+    for (const file of req.files) {
+      const fileInfo = {
+        fileId: file.filename.split('.')[0],
+        originalName: file.originalname,
+        filename: file.filename,
+        path: file.path,
+        size: file.size,
+        mimetype: file.mimetype,
+        userId: req.user._id
+      };
+
+      const queueItem = new ProcessingQueue({
+        fileId: fileInfo.fileId,
+        userId: req.user._id,
+        fileName: fileInfo.originalName,
+        fileType: fileInfo.mimetype,
+        fileSize: fileInfo.size,
+        filePath: fileInfo.path,
+        status: 'pending',
+        priority: 'normal',
+        createdAt: new Date()
+      });
+
+      await queueItem.save();
+      queueItems.push({
+        fileId: fileInfo.fileId,
+        fileName: fileInfo.originalName,
+        queueId: queueItem._id
+      });
+    }
+
+    res.status(201).json({
       success: true,
-      message: `${req.files.length} files uploaded successfully`,
-      data: filesData
+      message: `${req.files.length} files uploaded successfully and queued for processing`,
+      data: {
+        files: queueItems,
+        count: req.files.length
+      }
     });
+
   } catch (error) {
-    console.error('Multiple file upload error:', error);
+    console.error('❌ Multiple upload error:', error);
+
+    // Clean up files if error occurred
+    if (req.files) {
+      for (const file of req.files) {
+        await fs.remove(file.path);
+      }
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Server error during file upload'
+      message: error.message || 'Failed to upload files'
     });
   }
 });
 
-// Get file by filename
-router.get('/file/:filename', (req, res) => {
+// Get upload status
+router.get('/status/:fileId', auth, async (req, res) => {
   try {
-    const { filename } = req.params;
-    const filePath = path.join(uploadsDir, filename);
+    const { fileId } = req.params;
 
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    const queueItem = await ProcessingQueue.findOne({ fileId });
+
+    if (!queueItem) {
       return res.status(404).json({
         success: false,
         message: 'File not found'
       });
     }
 
-    // Send file
-    res.sendFile(filePath);
-  } catch (error) {
-    console.error('Get file error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
-// Delete file
-router.delete('/file/:filename', auth, (req, res) => {
-  try {
-    const { filename } = req.params;
-    const filePath = path.join(uploadsDir, filename);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
+    // Check authorization
+    if (queueItem.userId.toString() !== req.user._id.toString() && req.userRole !== 'doctor') {
+      return res.status(403).json({
         success: false,
-        message: 'File not found'
+        message: 'Unauthorized'
       });
     }
-
-    // Delete file
-    fs.unlinkSync(filePath);
 
     res.json({
       success: true,
-      message: 'File deleted successfully'
+      data: {
+        fileId: queueItem.fileId,
+        fileName: queueItem.fileName,
+        status: queueItem.status,
+        createdAt: queueItem.createdAt,
+        completedAt: queueItem.completedAt,
+        failedAt: queueItem.failedAt,
+        errorMessage: queueItem.errorMessage,
+        attempts: queueItem.attempts
+      }
     });
+
   } catch (error) {
-    console.error('Delete file error:', error);
+    console.error('❌ Status check error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Failed to get upload status'
     });
   }
 });
 
-// Error handling middleware for multer
-router.use((error, req, res, next) => {
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        message: 'File too large. Maximum size is 10MB.'
-      });
-    }
-    if (error.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({
-        success: false,
-        message: 'Too many files. Maximum is 10 files.'
-      });
-    }
+// Get user's uploads
+router.get('/my-uploads', auth, isPatient, async (req, res) => {
+  try {
+    const uploads = await ProcessingQueue.find({
+      userId: req.user._id
+    }).sort({ createdAt: -1 }).limit(50);
+
+    res.json({
+      success: true,
+      data: uploads.map(item => ({
+        fileId: item.fileId,
+        fileName: item.fileName,
+        status: item.status,
+        createdAt: item.createdAt,
+        completedAt: item.completedAt,
+        fileType: item.fileType,
+        fileSize: item.fileSize
+      }))
+    });
+
+  } catch (error) {
+    console.error('❌ Get uploads error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get uploads'
+    });
   }
-  
-  res.status(400).json({
-    success: false,
-    message: error.message || 'File upload error'
-  });
 });
 
 module.exports = router;

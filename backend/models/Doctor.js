@@ -32,73 +32,58 @@ const doctorSchema = new mongoose.Schema({
   },
   specialization: {
     type: String,
-    required: true,
-    trim: true
+    required: true
   },
   qualification: {
-    type: String,
-    trim: true
+    type: String
   },
   experience: {
-    type: Number, // years of experience
-    min: 0
+    type: Number,
+    default: 0
   },
   licenseNumber: {
-    type: String,
-    unique: true,
-    sparse: true
+    type: String
   },
-  hospital: {
-    name: String,
-    address: {
-      street: String,
-      city: String,
-      state: String,
-      pincode: String,
-      country: {
-        type: String,
-        default: 'India'
-      }
-    }
+  phone: {
+    type: String
   },
-  phone: String,
+  address: {
+    clinic: String,
+    street: String,
+    city: String,
+    state: String,
+    pincode: String,
+    country: { type: String, default: 'India' }
+  },
   consultationFee: {
     type: Number,
-    min: 0
+    default: 0
   },
-  availableHours: {
-    monday: { start: String, end: String },
-    tuesday: { start: String, end: String },
-    wednesday: { start: String, end: String },
-    thursday: { start: String, end: String },
-    friday: { start: String, end: String },
-    saturday: { start: String, end: String },
-    sunday: { start: String, end: String }
-  },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  rating: {
-    average: {
-      type: Number,
-      default: 0,
-      min: 0,
-      max: 5
+  availability: [{
+    day: {
+      type: String,
+      enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     },
-    count: {
-      type: Number,
-      default: 0
-    }
-  }
-}, {
-  timestamps: true
-});
+    slots: [{
+      startTime: String,
+      endTime: String,
+      isAvailable: { type: Boolean, default: true }
+    }]
+  }],
+  patients: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  lastLogin: Date
+}, { timestamps: true });
 
-// Hash password before saving
-doctorSchema.pre('save', async function(next) {
+// 🔐 Hash password before saving
+doctorSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
-  
   try {
     const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
@@ -108,16 +93,25 @@ doctorSchema.pre('save', async function(next) {
   }
 });
 
-// Compare password method
-doctorSchema.methods.comparePassword = async function(candidatePassword) {
+// 🔐 Compare password
+doctorSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Remove password from JSON output
-doctorSchema.methods.toJSON = function() {
+// 🚫 Remove password from output
+doctorSchema.methods.toJSON = function () {
   const doctorObject = this.toObject();
   delete doctorObject.password;
   return doctorObject;
 };
+
+// Generate doctor ID if not provided
+doctorSchema.pre('save', async function (next) {
+  if (!this.doctorId) {
+    const count = await mongoose.model('Doctor').countDocuments();
+    this.doctorId = `DR${(count + 1).toString().padStart(4, '0')}`;
+  }
+  next();
+});
 
 module.exports = mongoose.model('Doctor', doctorSchema);

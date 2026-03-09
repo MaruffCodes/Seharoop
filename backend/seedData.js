@@ -11,7 +11,7 @@ dotenv.config();
 // Connect to MongoDB
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/medrecord', {
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/medrecord', {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
@@ -182,7 +182,7 @@ const createSamplePatient = async () => {
     console.log(`   Email: ${samplePatient.email}`);
     console.log(`   Patient ID: ${samplePatient.patientId}`);
     console.log(`   Password: password123`);
-    
+
     return samplePatient;
   } catch (error) {
     console.error('❌ Error creating sample patient:', error);
@@ -245,7 +245,7 @@ const createSampleDoctor = async () => {
     console.log(`   Doctor ID: ${sampleDoctor.doctorId}`);
     console.log(`   Password: doctor123`);
     console.log(`   Specialization: ${sampleDoctor.specialization}`);
-    
+
     return sampleDoctor;
   } catch (error) {
     console.error('❌ Error creating sample doctor:', error);
@@ -257,13 +257,13 @@ const createSampleDoctor = async () => {
 const seedDatabase = async () => {
   try {
     console.log('🌱 Starting database seeding...');
-    
+
     await connectDB();
-    
+
     // Create sample data
     const patient = await createSamplePatient();
     const doctor = await createSampleDoctor();
-    
+
     console.log('\n✅ Database seeding completed successfully!');
     console.log('\n📋 Sample Login Credentials:');
     console.log('=================================');
@@ -276,7 +276,7 @@ const seedDatabase = async () => {
     console.log('Password: doctor123');
     console.log('Doctor ID: DR0001');
     console.log('=================================\n');
-    
+
     process.exit(0);
   } catch (error) {
     console.error('❌ Database seeding failed:', error);

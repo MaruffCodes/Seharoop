@@ -3,14 +3,14 @@ const jwt = require('jsonwebtoken');
 const QRCode = require('qrcode');
 const User = require('../models/User');
 const Doctor = require('../models/Doctor');
-const auth = require('../middleware/auth');
+const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Generate JWT token
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET, {
-    expiresIn: '1d'
+    expiresIn: '30d'
   });
 };
 
@@ -18,11 +18,11 @@ const generateToken = (id, role) => {
 const generatePatientId = async () => {
   const lastPatient = await User.findOne().sort({ patientId: -1 });
   let nextId = 1;
-  
+
   if (lastPatient && lastPatient.patientId) {
     nextId = parseInt(lastPatient.patientId) + 1;
   }
-  
+
   return nextId.toString().padStart(5, '0');
 };
 
@@ -30,12 +30,12 @@ const generatePatientId = async () => {
 const generateDoctorId = async () => {
   const lastDoctor = await Doctor.findOne().sort({ doctorId: -1 });
   let nextId = 1;
-  
+
   if (lastDoctor && lastDoctor.doctorId) {
     const numericPart = lastDoctor.doctorId.replace('DR', '');
     nextId = parseInt(numericPart) + 1;
   }
-  
+
   return `DR${nextId.toString().padStart(4, '0')}`;
 };
 
@@ -79,7 +79,8 @@ router.post('/register/patient', async (req, res) => {
       password,
       patientId,
       qrCode: qrCodeData,
-      role: 'patient'
+      role: 'patient',
+      hasMedicalForm: false
     });
 
     await patient.save();
@@ -92,13 +93,16 @@ router.post('/register/patient', async (req, res) => {
       message: 'Patient registered successfully',
       data: {
         token,
-        user: patient,
+        user: {
+          ...patient.toJSON(),
+          hasMedicalForm: false
+        },
         patientId
       }
     });
 
   } catch (error) {
-    console.error('Patient registration error:', error);
+    console.error('❌ Patient registration error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during registration'
@@ -160,13 +164,13 @@ router.post('/register/doctor', async (req, res) => {
       message: 'Doctor registered successfully',
       data: {
         token,
-        user: doctor,
+        user: doctor.toJSON(),
         doctorId
       }
     });
 
   } catch (error) {
-    console.error('Doctor registration error:', error);
+    console.error('❌ Doctor registration error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during registration'
@@ -213,12 +217,15 @@ router.post('/login/patient', async (req, res) => {
       message: 'Login successful',
       data: {
         token,
-        user: patient
+        user: {
+          ...patient.toJSON(),
+          hasMedicalForm: patient.hasMedicalForm || false
+        }
       }
     });
 
   } catch (error) {
-    console.error('Patient login error:', error);
+    console.error('❌ Patient login error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during login'
@@ -265,34 +272,58 @@ router.post('/login/doctor', async (req, res) => {
       message: 'Login successful',
       data: {
         token,
-        user: doctor
+        user: doctor.toJSON()
       }
     });
 
   } catch (error) {
-    console.error('Doctor login error:', error);
+    console.error('❌ Doctor login error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error during login'
     });
   }
 });
-// router.post('/logout', auth, async (req, res) => {
-//   try {
-//     // For JWT, logout is client-side (just delete the token).
-//     // If you want token invalidation, you'd maintain a blacklist here.
-    
-//     res.json({
-//       success: true,
-//       message: 'Logout successful. Please remove token from client storage.'
-//     });
-//   } catch (error) {
-//     console.error('Logout error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Server error during logout'
-//     });
-//   }
-// });
+
+// Logout endpoint
+router.post('/logout', auth, async (req, res) => {
+  try {
+    // In a stateless JWT setup, we don't need to do anything server-side
+    // The client will remove the token
+    // For enhanced security, you could implement a token blacklist here
+
+    console.log(`👋 User logged out: ${req.user._id} (${req.userRole})`);
+
+    res.json({
+      success: true,
+      message: 'Logged out successfully'
+    });
+  } catch (error) {
+    console.error('❌ Logout error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during logout'
+    });
+  }
+});
+
+// Optional: Token refresh endpoint
+router.post('/refresh-token', auth, async (req, res) => {
+  try {
+    // Generate new token
+    const token = generateToken(req.user._id, req.userRole);
+
+    res.json({
+      success: true,
+      data: { token }
+    });
+  } catch (error) {
+    console.error('❌ Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during token refresh'
+    });
+  }
+});
 
 module.exports = router;
