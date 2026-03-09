@@ -29,13 +29,14 @@ import {
     AlertTriangle,
     Clock,
     Scissors,
-    X
+    X,
+    Brain
 } from 'lucide-react-native';
 import ApiService from '../../services/api';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
-type SummaryType = 'general' | 'cardiology' | 'orthopedic';
+type SummaryType = 'general' | 'cardiology' | 'orthopedic' | 'slm';
 
 interface PatientSummary {
     // From the API response - general summary
@@ -128,20 +129,36 @@ interface PatientSummary {
     mobilityStatus?: string;
 }
 
+interface SLMSummary {
+    success: boolean;
+    summary: string;
+    structured_summary?: any;
+    type: string;
+    timestamp: string;
+}
+
 export default function PatientSummary() {
     const { patientId } = useLocalSearchParams();
     const [summary, setSummary] = useState<PatientSummary | null>(null);
     const [cardiologySummary, setCardiologySummary] = useState<any>(null);
     const [orthopedicSummary, setOrthopedicSummary] = useState<any>(null);
+    const [slmSummary, setSlmSummary] = useState<SLMSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [loadingCardiology, setLoadingCardiology] = useState(false);
     const [loadingOrthopedic, setLoadingOrthopedic] = useState(false);
+    const [loadingSLM, setLoadingSLM] = useState(false);
     const [activeTab, setActiveTab] = useState<SummaryType>('general');
     const router = useRouter();
 
     useEffect(() => {
         loadPatientSummary();
     }, [patientId]);
+
+    useEffect(() => {
+        if (activeTab === 'slm' && !slmSummary && !loadingSLM) {
+            loadSLMSummary();
+        }
+    }, [activeTab]);
 
     const loadPatientSummary = async () => {
         try {
@@ -188,6 +205,21 @@ export default function PatientSummary() {
             console.error('Error loading orthopedic summary:', error);
         } finally {
             setLoadingOrthopedic(false);
+        }
+    };
+
+    const loadSLMSummary = async () => {
+        try {
+            setLoadingSLM(true);
+            // For doctor view, we need patient-specific SLM summary
+            const response = await ApiService.getPatientSLMSummaryDoctor(patientId as string);
+            if (response.success) {
+                setSlmSummary(response.data);
+            }
+        } catch (error) {
+            console.error('Error loading SLM summary:', error);
+        } finally {
+            setLoadingSLM(false);
         }
     };
 
@@ -351,6 +383,24 @@ export default function PatientSummary() {
         }
     };
 
+    const downloadSLMSummary = async () => {
+        if (!slmSummary) return;
+
+        try {
+            const fileName = `AI_Medical_Summary_${Date.now()}.txt`;
+            const fileUri = FileSystem.documentDirectory + fileName;
+            await FileSystem.writeAsStringAsync(fileUri, slmSummary.summary);
+
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(fileUri);
+            } else {
+                Alert.alert('Success', 'AI Summary saved to device');
+            }
+        } catch (error) {
+            Alert.alert('Error', 'Could not download AI summary');
+        }
+    };
+
     const renderTabBar = () => (
         <View style={styles.tabContainer}>
             <TouchableOpacity
@@ -378,6 +428,16 @@ export default function PatientSummary() {
                 <Bone size={16} color={activeTab === 'orthopedic' ? '#059669' : '#64748B'} />
                 <Text style={[styles.tabText, activeTab === 'orthopedic' && { color: '#059669' }]}>
                     Orthopedic
+                </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+                style={[styles.tab, activeTab === 'slm' && styles.activeSLMTab]}
+                onPress={() => setActiveTab('slm')}
+            >
+                <Brain size={16} color={activeTab === 'slm' ? '#8B5CF6' : '#64748B'} />
+                <Text style={[styles.tabText, activeTab === 'slm' && styles.activeSLMTabText]}>
+                    AI Summary
                 </Text>
             </TouchableOpacity>
         </View>
@@ -821,6 +881,50 @@ export default function PatientSummary() {
         );
     };
 
+    const renderSLMSummary = () => {
+        if (loadingSLM) {
+            return (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#8B5CF6" />
+                    <Text style={styles.loadingText}>Generating AI summary...</Text>
+                </View>
+            );
+        }
+
+        if (!slmSummary) {
+            return (
+                <View style={styles.emptyState}>
+                    <Brain size={48} color="#8B5CF6" />
+                    <Text style={styles.emptyStateTitle}>No AI Summary Yet</Text>
+                    <Text style={styles.emptyStateText}>
+                        Upload documents to generate AI-powered medical summaries
+                    </Text>
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.slmContainer}>
+                <View style={styles.slmHeader}>
+                    <View style={styles.slmTitleContainer}>
+                        <Brain size={24} color="#8B5CF6" />
+                        <Text style={styles.slmTitle}>AI-Generated Medical Summary</Text>
+                    </View>
+                    <TouchableOpacity onPress={downloadSLMSummary} style={styles.slmDownloadButton}>
+                        <Download size={20} color="#8B5CF6" />
+                    </TouchableOpacity>
+                </View>
+
+                <ScrollView style={styles.slmContent} showsVerticalScrollIndicator={false}>
+                    <Text style={styles.slmSummaryText}>{slmSummary.summary}</Text>
+                    <Text style={styles.slmTimestamp}>
+                        Generated: {new Date(slmSummary.timestamp).toLocaleString()}
+                    </Text>
+                </ScrollView>
+            </View>
+        );
+    };
+
     if (loading) {
         return (
             <SafeAreaView style={styles.container}>
@@ -864,9 +968,15 @@ export default function PatientSummary() {
                     <ArrowLeft size={24} color="#2563EB" />
                 </TouchableOpacity>
                 <Text style={styles.title}>Patient Summary</Text>
-                <TouchableOpacity style={styles.downloadButton} onPress={downloadSummary}>
-                    <Download size={20} color="#2563EB" />
-                </TouchableOpacity>
+                {activeTab === 'slm' ? (
+                    <TouchableOpacity style={styles.downloadButton} onPress={downloadSLMSummary}>
+                        <Download size={20} color="#8B5CF6" />
+                    </TouchableOpacity>
+                ) : (
+                    <TouchableOpacity style={styles.downloadButton} onPress={downloadSummary}>
+                        <Download size={20} color="#2563EB" />
+                    </TouchableOpacity>
+                )}
             </View>
 
             {renderTabBar()}
@@ -875,6 +985,7 @@ export default function PatientSummary() {
                 {activeTab === 'general' && renderGeneralSummary()}
                 {activeTab === 'cardiology' && renderCardiologySummary()}
                 {activeTab === 'orthopedic' && renderOrthopedicSummary()}
+                {activeTab === 'slm' && renderSLMSummary()}
             </ScrollView>
         </SafeAreaView>
     );
@@ -935,6 +1046,9 @@ const styles = StyleSheet.create({
     activeTab: {
         backgroundColor: '#EFF6FF',
     },
+    activeSLMTab: {
+        backgroundColor: '#F3E8FF',
+    },
     tabText: {
         fontSize: 12,
         fontWeight: '600',
@@ -942,6 +1056,9 @@ const styles = StyleSheet.create({
     },
     activeTabText: {
         color: '#2563EB',
+    },
+    activeSLMTabText: {
+        color: '#8B5CF6',
     },
     content: {
         flex: 1,
@@ -1186,5 +1303,57 @@ const styles = StyleSheet.create({
     mobilityText: {
         fontSize: 14,
         color: '#1E293B',
+    },
+    slmContainer: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        padding: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+        borderWidth: 1,
+        borderColor: '#8B5CF6',
+    },
+    slmHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+        paddingBottom: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E2E8F0',
+    },
+    slmTitleContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    slmTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#8B5CF6',
+    },
+    slmDownloadButton: {
+        padding: 8,
+        borderRadius: 8,
+        backgroundColor: '#F3E8FF',
+    },
+    slmContent: {
+        maxHeight: 500,
+    },
+    slmSummaryText: {
+        fontSize: 14,
+        color: '#1E293B',
+        lineHeight: 22,
+    },
+    slmTimestamp: {
+        fontSize: 12,
+        color: '#9CA3AF',
+        marginTop: 16,
+        fontStyle: 'italic',
+        textAlign: 'right',
     },
 });

@@ -358,5 +358,129 @@ router.get('/patients', auth, isDoctor, async (req, res) => {
     });
   }
 });
+// Get patient SLM-generated summary for doctor
+router.get('/patient/:patientId/slm-summary', auth, isDoctor, async (req, res) => {
+  try {
+    const { patientId } = req.params;
 
+    const patient = await User.findOne({
+      patientId,
+      role: 'patient'
+    }).select('-password');
+
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+
+    const medicalForm = await PatientMedicalForm.findOne({
+      patientId: patient._id
+    });
+
+    const recentDocs = await ProcessedDocument.find({ userId: patient._id })
+      .sort({ processedAt: -1 })
+      .limit(50);
+
+    // Prepare patient data for SLM
+    const patientData = {
+      name: patient.name,
+      patientId: patient.patientId,
+      age: medicalForm?.personalInfo?.dateOfBirth
+        ? new Date().getFullYear() - new Date(medicalForm.personalInfo.dateOfBirth).getFullYear()
+        : null,
+      gender: medicalForm?.personalInfo?.gender || null,
+      bloodGroup: patient.bloodGroup || medicalForm?.personalInfo?.bloodGroup || null,
+      email: patient.email,
+      phone: medicalForm?.personalInfo?.phone || null,
+      address: medicalForm?.personalInfo?.address ?
+        `${medicalForm.personalInfo.address.street || ''}, ${medicalForm.personalInfo.address.city || ''}, ${medicalForm.personalInfo.address.state || ''} ${medicalForm.personalInfo.address.pincode || ''}`.trim() : null
+    };
+
+    // Collect extracted data from documents
+    const allDiagnoses = new Set();
+    const allMedications = new Set();
+    const allLabResults = new Set();
+    const allAllergies = new Set();
+    const allChronicDiseases = new Set();
+    const allComorbidConditions = new Set();
+    const allPastSurgeries = [];
+
+    recentDocs.forEach(doc => {
+      if (doc.diagnoses) doc.diagnoses.forEach(d => allDiagnoses.add(d));
+      if (doc.medications) doc.medications.forEach(m => allMedications.add(m));
+      if (doc.labResults) doc.labResults.forEach(l => allLabResults.add(l));
+      if (doc.allergies) doc.allergies.forEach(a => allAllergies.add(a));
+    });
+
+    // Add data from medical form
+    if (medicalForm) {
+      if (medicalForm.medicalConditions?.chronicDiseases) {
+        medicalForm.medicalConditions.chronicDiseases.forEach(d => allChronicDiseases.add(d));
+      }
+      if (medicalForm.medicalConditions?.comorbidConditions) {
+        medicalForm.medicalConditions.comorbidConditions.forEach(c => allComorbidConditions.add(c));
+      }
+      if (medicalForm.medicalConditions?.medicationAllergies) {
+        medicalForm.medicalConditions.medicationAllergies.forEach(a => allAllergies.add(a.medication));
+      }
+      if (medicalForm.surgicalHistory?.pastSurgeries) {
+        medicalForm.surgicalHistory.pastSurgeries.forEach(s => {
+          allPastSurgeries.push({
+            name: s.surgery,
+            date: s.date ? new Date(s.date).toLocaleDateString() : null,
+            hospital: s.hospital
+          });
+        });
+      }
+    }
+
+    const extractedData = {
+      diagnoses: Array.from(allDiagnoses),
+      medications: Array.from(allMedications),
+      labResults: Array.from(allLabResults),
+      allergies: Array.from(allAllergies),
+      chronicDiseases: Array.from(allChronicDiseases),
+      comorbidConditions: Array.from(allComorbidConditions),
+      pastSurgeries: allPastSurgeries
+    };
+
+    // Call SLM service to generate summary
+    const slmClient = require('../services/slmClient');
+
+    try {
+      const slmSummary = await slmClient.generateSummary(
+        patientData,
+        extractedData,
+        'general'  // We want the general summary format
+      );
+
+      res.json({
+        success: true,
+        data: slmSummary
+      });
+    } catch (slmError) {
+      console.error('SLM service error:', slmError);
+
+      // Return a fallback response if SLM service fails
+      res.json({
+        success: true,
+        data: {
+          success: false,
+          summary: "AI summary generation is temporarily unavailable. Please try again later.",
+          type: "general",
+          timestamp: new Date().toISOString()
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error('Error generating SLM summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate AI summary'
+    });
+  }
+});
 module.exports = router;

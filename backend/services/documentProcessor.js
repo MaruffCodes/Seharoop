@@ -4,6 +4,7 @@ const User = require('../models/User');
 const ProcessedDocument = require('../models/ProcessedDocument');
 const QRCode = require('qrcode');
 const pythonService = require('./pythonClient');
+const slmClient = require('./slmClient');
 
 class DocumentProcessor {
     async processDocument(fileInfo, userId) {
@@ -24,12 +25,71 @@ class DocumentProcessor {
                 throw new Error(pythonResult.error || 'Python processing failed');
             }
 
-            console.log('📥 Python result received:', JSON.stringify(pythonResult, null, 2));
+            console.log('📥 Python result received');
 
             // Transform Python data to match MongoDB schema
             const transformedData = this.transformPythonResult(pythonResult);
 
-            // Step 2: Save processed document
+            // Step 2: Get patient data for SLM
+            console.log('👤 Fetching patient data for SLM...');
+            const user = await User.findById(userId);
+            const PatientMedicalForm = require('../models/PatientMedicalForm');
+            const medicalForm = await PatientMedicalForm.findOne({ patientId: userId });
+
+            // Prepare patient data for SLM
+            const patientData = {
+                name: user.name,
+                patientId: user.patientId,
+                age: medicalForm?.personalInfo?.dateOfBirth
+                    ? new Date().getFullYear() - new Date(medicalForm.personalInfo.dateOfBirth).getFullYear()
+                    : null,
+                gender: medicalForm?.personalInfo?.gender || null,
+                bloodGroup: user.bloodGroup || medicalForm?.personalInfo?.bloodGroup || null,
+                email: user.email,
+                phone: medicalForm?.personalInfo?.phone || null,
+                address: this.formatAddress(medicalForm?.personalInfo?.address)
+            };
+
+            // Prepare extracted data for SLM
+            const extractedData = {
+                diagnoses: transformedData.diagnoses || [],
+                medications: transformedData.medications || [],
+                labResults: transformedData.labResults || [],
+                allergies: transformedData.allergies || [],
+                pastSurgeries: medicalForm?.surgicalHistory?.pastSurgeries || [],
+                chronicDiseases: medicalForm?.medicalConditions?.chronicDiseases || [],
+                comorbidConditions: medicalForm?.medicalConditions?.comorbidConditions || []
+            };
+
+            // Step 3: Generate SLM summaries
+            console.log('🧠 Generating SLM summaries...');
+
+            let generalSummary = null;
+            let cardiologySummary = null;
+            let orthopedicSummary = null;
+
+            try {
+                [generalSummary, cardiologySummary, orthopedicSummary] = await Promise.all([
+                    slmClient.generateSummary(patientData, extractedData, 'general').catch(e => {
+                        console.log('⚠️ General summary generation skipped:', e.message);
+                        return null;
+                    }),
+                    slmClient.generateSummary(patientData, extractedData, 'cardiology').catch(e => {
+                        console.log('⚠️ Cardiology summary generation skipped:', e.message);
+                        return null;
+                    }),
+                    slmClient.generateSummary(patientData, extractedData, 'orthopedic').catch(e => {
+                        console.log('⚠️ Orthopedic summary generation skipped:', e.message);
+                        return null;
+                    })
+                ]);
+                console.log('✅ SLM summaries generated successfully');
+            } catch (slmError) {
+                console.log('⚠️ SLM service not available, continuing without AI summaries');
+                // Continue without SLM summaries
+            }
+
+            // Step 4: Save processed document with SLM summaries
             console.log('💾 Saving to database...');
             const processedDoc = new ProcessedDocument({
                 fileId: fileId || path.basename(filePath, path.extname(filePath)),
@@ -46,7 +106,12 @@ class DocumentProcessor {
                 doctors: transformedData.doctors || [],
                 hospitals: transformedData.hospitals || [],
                 vitals: transformedData.vitals || {},
-                summary: transformedData.summary || pythonResult.summary || '',
+                summary: generalSummary?.summary || pythonResult.summary || transformedData.summary || '',
+                slmSummaries: {
+                    general: generalSummary,
+                    cardiology: cardiologySummary,
+                    orthopedic: orthopedicSummary
+                },
                 confidence: {
                     textLength: pythonResult.confidence?.textLength || 0,
                     entityCount: pythonResult.confidence?.entityCount || 0,
@@ -60,22 +125,23 @@ class DocumentProcessor {
                     fileSize: size,
                     processingDate: new Date(),
                     textLength: pythonResult.text?.length || 0,
-                    ocrConfidence: pythonResult.confidence?.overall || 0
+                    ocrConfidence: pythonResult.confidence?.overall || 0,
+                    slmGenerated: !!(generalSummary || cardiologySummary || orthopedicSummary)
                 }
             });
 
             await processedDoc.save();
             console.log('✅ Document saved to database with ID:', processedDoc._id);
 
-            // Step 3: Update patient's medical history
+            // Step 5: Update patient's medical history
             console.log('📊 Updating patient history...');
-            await this.updatePatientHistory(userId, processedDoc, transformedData);
+            await this.updatePatientHistory(userId, processedDoc, transformedData, generalSummary);
 
-            // Step 4: Refresh QR code with rich medical data
+            // Step 6: Refresh QR code with rich medical data
             console.log('📱 Refreshing QR code with medical data...');
             await this.refreshPatientQRCode(userId);
 
-            // Step 5: Move file to permanent storage
+            // Step 7: Move file to permanent storage
             console.log('📁 Moving file to permanent storage...');
             await this.moveFile(filePath, fileId, originalName);
 
@@ -84,13 +150,33 @@ class DocumentProcessor {
             return {
                 success: true,
                 documentId: processedDoc._id,
-                data: transformedData
+                data: {
+                    ...transformedData,
+                    slmSummaries: {
+                        general: generalSummary,
+                        cardiology: cardiologySummary,
+                        orthopedic: orthopedicSummary
+                    }
+                }
             };
 
         } catch (error) {
             console.error('❌ Document processing error:', error);
             throw error;
         }
+    }
+
+    // Format address for SLM
+    formatAddress(address) {
+        if (!address) return null;
+        const parts = [
+            address.street,
+            address.city,
+            address.state,
+            address.pincode,
+            address.country
+        ].filter(Boolean);
+        return parts.length > 0 ? parts.join(', ') : null;
     }
 
     // Transform Python result to match MongoDB schema
@@ -130,7 +216,7 @@ class DocumentProcessor {
         return dateStr;
     }
 
-    async updatePatientHistory(userId, document, transformedData) {
+    async updatePatientHistory(userId, document, transformedData, slmSummary) {
         try {
             const user = await User.findById(userId);
             if (!user) {
@@ -158,10 +244,13 @@ class DocumentProcessor {
                 yearEntry.months.push(monthEntry);
             }
 
+            // Use SLM summary if available, otherwise fallback
+            const description = slmSummary?.summary || transformedData.summary || `Medical document: ${document.fileName}`;
+
             // Create medical record
             const medicalRecord = {
                 date: new Date(),
-                description: transformedData.summary || `Medical document: ${document.fileName}`,
+                description: description,
                 type: 'document',
                 documents: [{
                     filename: document.fileId,
@@ -176,7 +265,8 @@ class DocumentProcessor {
                     medications: transformedData.medications || [],
                     labResults: transformedData.labResults || [],
                     allergies: transformedData.allergies || []
-                }
+                },
+                slmGenerated: !!slmSummary
             };
 
             monthEntry.records.push(medicalRecord);
@@ -219,6 +309,10 @@ class DocumentProcessor {
                 if (doc.labResults) doc.labResults.forEach(l => allLabResults.add(l));
             });
 
+            // Check if we have any SLM summaries
+            const hasSLM = recentDocs.some(doc => doc.slmSummaries &&
+                (doc.slmSummaries.general || doc.slmSummaries.cardiology || doc.slmSummaries.orthopedic));
+
             // Create rich QR data
             const qrData = {
                 patientId: user.patientId,
@@ -236,7 +330,9 @@ class DocumentProcessor {
                 criticalInfo: {
                     allergies: Array.from(allAllergies),
                     chronicConditions: medicalForm?.medicalConditions?.chronicDiseases || []
-                }
+                },
+                aiGenerated: hasSLM,
+                summary: recentDocs[0]?.slmSummaries?.general?.summary || null
             };
 
             // Generate QR code

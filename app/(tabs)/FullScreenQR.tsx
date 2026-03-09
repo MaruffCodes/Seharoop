@@ -3,18 +3,26 @@ import { View, StyleSheet, TouchableOpacity, Alert, Text, ActivityIndicator, Scr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image } from 'react-native';
-import { ArrowLeft, Download, Info, FileText, X, Heart, Bone, Stethoscope } from 'lucide-react-native';
+import { ArrowLeft, Download, Info, FileText, X, Heart, Bone, Stethoscope, Brain } from 'lucide-react-native';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import ApiService from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
-type Specialty = 'general' | 'cardiology' | 'orthopedic';
+type Specialty = 'general' | 'cardiology' | 'orthopedic' | 'slm';
 
 interface SpecialtyQRData {
   qrCode: string;
   summary: any;
   specialty: Specialty;
+}
+
+interface SLMSummary {
+  success: boolean;
+  summary: string;
+  structured_summary?: any;
+  type: string;
+  timestamp: string;
 }
 
 export default function FullScreenQR() {
@@ -23,12 +31,15 @@ export default function FullScreenQR() {
   const [specialtyData, setSpecialtyData] = useState<Record<Specialty, SpecialtyQRData | null>>({
     general: null,
     cardiology: null,
-    orthopedic: null
+    orthopedic: null,
+    slm: null
   });
+  const [slmSummary, setSlmSummary] = useState<SLMSummary | null>(null);
   const [loading, setLoading] = useState<Record<Specialty, boolean>>({
     general: true,
     cardiology: false,
-    orthopedic: false
+    orthopedic: false,
+    slm: false
   });
   const [summaryModalVisible, setSummaryModalVisible] = useState(false);
   const router = useRouter();
@@ -41,7 +52,11 @@ export default function FullScreenQR() {
 
   // Load QR when specialty changes
   useEffect(() => {
-    if (!specialtyData[selectedSpecialty] && !loading[selectedSpecialty]) {
+    if (selectedSpecialty === 'slm') {
+      if (!slmSummary && !loading.slm) {
+        loadSLMSummary();
+      }
+    } else if (!specialtyData[selectedSpecialty] && !loading[selectedSpecialty]) {
       loadSpecialtyQR(selectedSpecialty);
     }
   }, [selectedSpecialty]);
@@ -65,7 +80,7 @@ export default function FullScreenQR() {
       }
 
       // Otherwise fetch from API
-      const response = await ApiService.generateSpecialtyQR(specialty);
+      const response = await ApiService.generateSpecialtyQR(specialty as any);
       if (response.success) {
         setSpecialtyData(prev => ({
           ...prev,
@@ -84,11 +99,38 @@ export default function FullScreenQR() {
     }
   };
 
+  const loadSLMSummary = async () => {
+    try {
+      setLoading(prev => ({ ...prev, slm: true }));
+      const response = await ApiService.getMySLMSummary();
+      if (response.success) {
+        setSlmSummary(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading SLM summary:', error);
+    } finally {
+      setLoading(prev => ({ ...prev, slm: false }));
+    }
+  };
+
   const handleDownload = async () => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Required', 'Storage permission is required to save the QR code.');
+        return;
+      }
+
+      if (selectedSpecialty === 'slm') {
+        // Download SLM summary as text
+        if (!slmSummary) return;
+
+        const fileName = `AI_Medical_Summary_${Date.now()}.txt`;
+        const file = new File(new Directory(Paths.document, 'Summaries'), fileName);
+        await file.write(slmSummary.summary);
+
+        await MediaLibrary.saveToLibraryAsync(file.uri);
+        Alert.alert('Success', 'AI Summary saved to your device.');
         return;
       }
 
@@ -109,8 +151,8 @@ export default function FullScreenQR() {
 
       Alert.alert('Success', `${selectedSpecialty} QR code saved to your photo library.`);
     } catch (error) {
-      console.error('Error downloading QR code:', error);
-      Alert.alert('Error', 'Failed to save QR code: ' + (error as Error).message);
+      console.error('Error downloading:', error);
+      Alert.alert('Error', 'Failed to save: ' + (error as Error).message);
     }
   };
 
@@ -118,6 +160,7 @@ export default function FullScreenQR() {
     switch (specialty) {
       case 'cardiology': return <Heart size={20} color="#DC2626" />;
       case 'orthopedic': return <Bone size={20} color="#059669" />;
+      case 'slm': return <Brain size={20} color="#8B5CF6" />;
       default: return <Stethoscope size={20} color="#2563EB" />;
     }
   };
@@ -126,6 +169,7 @@ export default function FullScreenQR() {
     switch (specialty) {
       case 'cardiology': return '#DC2626';
       case 'orthopedic': return '#059669';
+      case 'slm': return '#8B5CF6';
       default: return '#2563EB';
     }
   };
@@ -153,6 +197,22 @@ export default function FullScreenQR() {
       )}
     </TouchableOpacity>
   );
+
+  const renderSLMSummaryModal = () => {
+    if (!slmSummary) return null;
+
+    return (
+      <View style={styles.modalSection}>
+        <Text style={[styles.modalSectionTitle, { color: '#8B5CF6' }]}>AI GENERATED SUMMARY</Text>
+        <ScrollView style={styles.slmSummaryContainer}>
+          <Text style={styles.slmSummaryText}>{slmSummary.summary}</Text>
+          <Text style={styles.slmTimestamp}>
+            Generated: {new Date(slmSummary.timestamp).toLocaleString()}
+          </Text>
+        </ScrollView>
+      </View>
+    );
+  };
 
   const renderGeneralSummary = (summary: any) => (
     <>
@@ -528,48 +588,89 @@ export default function FullScreenQR() {
         {renderSpecialtyTab('general', 'General')}
         {renderSpecialtyTab('cardiology', 'Cardiology')}
         {renderSpecialtyTab('orthopedic', 'Orthopedic')}
+        {renderSpecialtyTab('slm', 'AI Summary')}
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* QR Code Display */}
-        <View style={styles.qrContainer}>
-          {currentData?.qrCode ? (
-            <Image source={{ uri: currentData.qrCode }} style={styles.qrImage} resizeMode="contain" />
-          ) : (
-            <View style={styles.placeholderQR}>
-              <ActivityIndicator size="small" color={currentColor} />
-              <Text style={[styles.placeholderText, { color: currentColor }]}>
-                Generating {selectedSpecialty} QR...
-              </Text>
+        {/* QR Code Display - Only show for non-SLM tabs */}
+        {selectedSpecialty !== 'slm' && (
+          <View style={styles.qrContainer}>
+            {currentData?.qrCode ? (
+              <Image source={{ uri: currentData.qrCode }} style={styles.qrImage} resizeMode="contain" />
+            ) : (
+              <View style={styles.placeholderQR}>
+                <ActivityIndicator size="small" color={currentColor} />
+                <Text style={[styles.placeholderText, { color: currentColor }]}>
+                  Generating {selectedSpecialty} QR...
+                </Text>
+              </View>
+            )}
+
+            {/* View Summary Button - Always show when we have data */}
+            {(currentData?.qrCode) && (
+              <TouchableOpacity
+                style={[styles.summaryButton, { backgroundColor: currentColor }]}
+                onPress={() => {
+                  if (currentData?.summary) {
+                    setSummaryModalVisible(true);
+                  } else {
+                    Alert.alert('Info', 'Loading summary data...');
+                    loadSpecialtyQR(selectedSpecialty);
+                  }
+                }}
+              >
+                <FileText size={20} color="#FFFFFF" />
+                <Text style={styles.summaryButtonText}>
+                  View {selectedSpecialty === 'general' ? 'General' :
+                    selectedSpecialty === 'cardiology' ? 'Cardiology' : 'Orthopedic'} Summary
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {/* AI Summary Content */}
+        {selectedSpecialty === 'slm' && (
+          <View style={[styles.slmContainer, { borderColor: currentColor }]}>
+            <View style={styles.slmHeader}>
+              <Brain size={32} color={currentColor} />
+              <Text style={[styles.slmTitle, { color: currentColor }]}>AI-Generated Medical Summary</Text>
             </View>
-          )}
 
+            {loading.slm ? (
+              <View style={styles.slmLoadingContainer}>
+                <ActivityIndicator size="large" color={currentColor} />
+                <Text style={styles.slmLoadingText}>Generating AI summary...</Text>
+              </View>
+            ) : slmSummary ? (
+              <>
+                <ScrollView style={styles.slmContent}>
+                  <Text style={styles.slmSummaryText}>{slmSummary.summary}</Text>
+                  <Text style={styles.slmTimestamp}>
+                    Generated: {new Date(slmSummary.timestamp).toLocaleString()}
+                  </Text>
+                </ScrollView>
+                <TouchableOpacity
+                  style={[styles.viewFullButton, { backgroundColor: currentColor }]}
+                  onPress={() => setSummaryModalVisible(true)}
+                >
+                  <Text style={styles.viewFullButtonText}>View Full Summary</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <View style={styles.slmEmptyState}>
+                <Brain size={48} color={currentColor} />
+                <Text style={styles.slmEmptyTitle}>No AI Summary Yet</Text>
+                <Text style={styles.slmEmptyText}>
+                  Upload documents to generate AI-powered medical summaries
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
 
-          {/* View Summary Button - Always show when we have data */}
-          {(currentData?.qrCode) && (
-            <TouchableOpacity
-              style={[styles.summaryButton, { backgroundColor: currentColor }]}
-              onPress={() => {
-                if (currentData?.summary) {
-                  setSummaryModalVisible(true);
-                } else {
-                  // If summary isn't loaded yet, try to load it
-                  Alert.alert('Info', 'Loading summary data...');
-                  loadSpecialtyQR(selectedSpecialty);
-                }
-              }}
-            >
-              <FileText size={20} color="#FFFFFF" />
-              <Text style={styles.summaryButtonText}>
-                View {selectedSpecialty === 'general' ? 'General' :
-                  selectedSpecialty === 'cardiology' ? 'Cardiology' : 'Orthopedic'} Summary
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Quick Info Preview */}
-        {currentData?.summary && (
+        {/* Quick Info Preview - Only for non-SLM tabs */}
+        {selectedSpecialty !== 'slm' && currentData?.summary && (
           <View style={[styles.previewContainer, { borderLeftColor: currentColor }]}>
             <View style={styles.previewHeader}>
               {getSpecialtyIcon(selectedSpecialty)}
@@ -662,8 +763,9 @@ export default function FullScreenQR() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: currentColor }]}>
-                {selectedSpecialty === 'general' ? 'GENERAL PATIENT SUMMARY' :
-                  selectedSpecialty === 'cardiology' ? 'CARDIOLOGY SUMMARY' : 'ORTHOPEDIC SUMMARY'}
+                {selectedSpecialty === 'slm' ? 'AI GENERATED MEDICAL SUMMARY' :
+                  selectedSpecialty === 'general' ? 'GENERAL PATIENT SUMMARY' :
+                    selectedSpecialty === 'cardiology' ? 'CARDIOLOGY SUMMARY' : 'ORTHOPEDIC SUMMARY'}
               </Text>
               <TouchableOpacity onPress={() => setSummaryModalVisible(false)}>
                 <X size={24} color="#6B7280" />
@@ -671,7 +773,9 @@ export default function FullScreenQR() {
             </View>
 
             <ScrollView style={styles.modalBody}>
-              {currentData?.summary && (
+              {selectedSpecialty === 'slm' ? (
+                renderSLMSummaryModal()
+              ) : currentData?.summary && (
                 <>
                   {/* Patient Information - Always Show */}
                   {selectedSpecialty === 'general' && renderGeneralSummary(currentData.summary)}
@@ -801,9 +905,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: '#F8FAFC',
     gap: 8,
+    flexWrap: 'wrap',
   },
   specialtyTab: {
     flex: 1,
+    minWidth: '22%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -914,6 +1020,81 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontStyle: 'italic',
   },
+  slmContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  slmHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  slmTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  slmLoadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  slmLoadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#64748B',
+  },
+  slmContent: {
+    maxHeight: 300,
+    marginBottom: 16,
+  },
+  slmSummaryText: {
+    fontSize: 14,
+    color: '#1E293B',
+    lineHeight: 22,
+  },
+  slmTimestamp: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 16,
+    fontStyle: 'italic',
+    textAlign: 'right',
+  },
+  slmEmptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  slmEmptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginTop: 16,
+  },
+  slmEmptyText: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  viewFullButton: {
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  viewFullButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -942,6 +1123,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
+    flex: 1,
   },
   modalBody: {
     padding: 20,
@@ -1067,6 +1249,9 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginLeft: 8,
     marginTop: 2,
+  },
+  slmSummaryContainer: {
+    maxHeight: 400,
   },
   modalUpdateText: {
     fontSize: 12,

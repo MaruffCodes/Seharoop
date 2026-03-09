@@ -462,6 +462,23 @@ class ApiService {
   public async getMyUploads(): Promise<ApiResponse> {
     return this.request<ApiResponse>('/upload/my-uploads');
   }
+
+  // Get AI-generated SLM summary for patient
+  // Get patient SLM summary for doctor
+  public async getPatientSLMSummaryDoctor(patientId: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/slm-summary`);
+  }
+
+  // Get patient's own SLM summary (for patient view)
+  // In your ApiService class, add a special method for SLM with longer timeout
+  public async getMySLMSummary(): Promise<ApiResponse> {
+    // Use a longer timeout (60 seconds) for SLM generation
+    return this.request<ApiResponse>("/patient/slm-summary", {
+      method: "GET",
+      // You'll need to modify your request method to accept custom timeout
+      // For now, we'll handle it in the backend
+    });
+  }
 }
 
 export default new ApiService();
