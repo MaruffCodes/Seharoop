@@ -1,13 +1,19 @@
-# dependencies
+# ===============================
+# Node dependencies
+# ===============================
 node_modules/
 
-# expo
+# ===============================
+# Expo / React Native
+# ===============================
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# native
+# ===============================
+# Native / iOS / Android keys
+# ===============================
 *.orig.*
 *.jks
 *.p8
@@ -15,25 +21,51 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# metro
+# ===============================
+# Metro bundler
+# ===============================
 .metro-health-check*
 
-# debug
+# ===============================
+# Debug logs
+# ===============================
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macos
+# ===============================
+# macOS
+# ===============================
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# ===============================
+# Local environment files
+# ===============================
 .env
+.env*.local
 
-# typescript
+# ===============================
+# TypeScript
+# ===============================
 *.tsbuildinfo
 
-# Ignore model files
+# ===============================
+# Python virtual environment & cache
+# ===============================
+backend/slm-service/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===============================
+# Python service model files
+# ===============================
 *.gguf
 backend/slm-service/models/
+
+# ===============================
+# Other Python temp / uploads
+# ===============================
+backend/slm-service/uploads/
