@@ -33,3 +33,7 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# Ignore model files
+*.gguf
+backend/slm-service/models/
