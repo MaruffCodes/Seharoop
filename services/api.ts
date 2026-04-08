@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from 'expo-router';
 
-const API_BASE_URL = "http://192.168.1.4:5001/api";
+const API_BASE_URL = "http://192.168.1.2:5001/api";
 
 interface ApiResponse<T = any> {
   success: boolean;
@@ -18,6 +18,7 @@ interface FileUpload {
 type RequestOptions = RequestInit & {
   headers?: Record<string, string>;
   requiresAuth?: boolean;
+  timeout?: number;
 };
 
 class ApiService {
@@ -46,14 +47,13 @@ class ApiService {
     endpoint: string,
     options: RequestOptions = {}
   ): Promise<T> {
-    const { requiresAuth = true, ...fetchOptions } = options;
+    const { requiresAuth = true, timeout = 10000, ...fetchOptions } = options;
 
     try {
       let token = null;
       if (requiresAuth) {
         token = await this.getToken();
 
-        // If no token, redirect to login
         if (!token) {
           router.replace('/login');
           throw new Error('No authentication token available');
@@ -72,11 +72,10 @@ class ApiService {
         (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
       }
 
-      console.log(`🌐 Making request to: ${API_BASE_URL}${endpoint}`);
+      console.log(`🌐 Making request to: ${API_BASE_URL}${endpoint} (timeout: ${timeout}ms)`);
 
-      // Add timeout to fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         ...config,
@@ -85,9 +84,7 @@ class ApiService {
 
       console.log(`📡 Response status: ${response.status}`);
 
-      // Handle unauthorized response
       if (response.status === 401) {
-        // Don't redirect for login attempts
         if (endpoint.includes('/login')) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(errorData.message || 'Invalid email or password');
@@ -104,7 +101,6 @@ class ApiService {
         throw new Error('Session expired. Please login again.');
       }
 
-      // Try to parse response as JSON
       let data;
       try {
         data = await response.json();
@@ -121,12 +117,10 @@ class ApiService {
     } catch (error: any) {
       console.error("❌ API request error:", error.message || error);
 
-      // Handle abort errors (timeout)
       if (error.name === 'AbortError') {
-        throw new Error('Request timeout. Server is not responding.');
+        throw new Error(`Request timeout after ${timeout}ms. Server is not responding.`);
       }
 
-      // Handle fetch errors (network issues)
       if (error.message === 'Network request failed' ||
         error.message.includes('Network') ||
         error.message.includes('Failed to fetch')) {
@@ -143,90 +137,30 @@ class ApiService {
 
   // ==================== AUTH METHODS ====================
   public async loginPatient(email: string, password: string): Promise<ApiResponse> {
-    try {
-      console.log('🔐 Attempting patient login...');
-      const response = await this.request<ApiResponse>("/auth/login/patient", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-        requiresAuth: false,
-      });
-
-      console.log('✅ Login response received:', response);
-
-      if (response.success && response.data) {
-        // Store token
-        this.token = response.data.token;
-        await AsyncStorage.setItem("seharoop_token", response.data.token);
-        await AsyncStorage.setItem("seharoop_user_role", "patient");
-        if (response.data.user) {
-          await AsyncStorage.setItem("seharoop_user_data", JSON.stringify(response.data.user));
-        }
-      }
-
-      return response;
-    } catch (error: any) {
-      console.error("❌ Login error:", error.message);
-      throw error;
-    }
+    return this.request<ApiResponse>("/auth/login/patient", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      requiresAuth: false,
+      timeout: 10000,
+    });
   }
 
   public async loginDoctor(email: string, password: string): Promise<ApiResponse> {
-    try {
-      console.log('🔐 Attempting doctor login...');
-      const response = await this.request<ApiResponse>("/auth/login/doctor", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-        requiresAuth: false,
-      });
-
-      console.log('✅ Login response received:', response);
-
-      if (response.success && response.data) {
-        this.token = response.data.token;
-        await AsyncStorage.setItem("seharoop_token", response.data.token);
-        await AsyncStorage.setItem("seharoop_user_role", "doctor");
-        if (response.data.user) {
-          await AsyncStorage.setItem("seharoop_user_data", JSON.stringify(response.data.user));
-        }
-      }
-
-      return response;
-    } catch (error: any) {
-      console.error("❌ Login error:", error.message);
-      throw error;
-    }
+    return this.request<ApiResponse>("/auth/login/doctor", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      requiresAuth: false,
+      timeout: 10000,
+    });
   }
 
-  public async registerPatient(
-    name: string,
-    email: string,
-    password: string
-  ): Promise<ApiResponse> {
-    try {
-      console.log('📝 Attempting patient registration...');
-      const response = await this.request<ApiResponse>("/auth/register/patient", {
-        method: "POST",
-        body: JSON.stringify({ name, email, password }),
-        requiresAuth: false,
-      });
-
-      if (response.success && response.data) {
-        this.token = response.data.token;
-        await AsyncStorage.setItem("seharoop_token", response.data.token);
-        await AsyncStorage.setItem("seharoop_user_role", "patient");
-        if (response.data.user) {
-          await AsyncStorage.setItem("seharoop_user_data", JSON.stringify({
-            ...response.data.user,
-            hasMedicalForm: false
-          }));
-        }
-      }
-
-      return response;
-    } catch (error: any) {
-      console.error("❌ Registration error:", error.message);
-      throw error;
-    }
+  public async registerPatient(name: string, email: string, password: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/auth/register/patient", {
+      method: "POST",
+      body: JSON.stringify({ name, email, password }),
+      requiresAuth: false,
+      timeout: 10000,
+    });
   }
 
   public async registerDoctor(
@@ -237,54 +171,23 @@ class ApiService {
     qualification?: string,
     experience?: number
   ): Promise<ApiResponse> {
-    try {
-      console.log('📝 Attempting doctor registration...');
-      const response = await this.request<ApiResponse>("/auth/register/doctor", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          email,
-          password,
-          specialization,
-          qualification,
-          experience,
-        }),
-        requiresAuth: false,
-      });
-
-      if (response.success && response.data) {
-        this.token = response.data.token;
-        await AsyncStorage.setItem("seharoop_token", response.data.token);
-        await AsyncStorage.setItem("seharoop_user_role", "doctor");
-        if (response.data.user) {
-          await AsyncStorage.setItem("seharoop_user_data", JSON.stringify(response.data.user));
-        }
-      }
-
-      return response;
-    } catch (error: any) {
-      console.error("❌ Registration error:", error.message);
-      throw error;
-    }
+    return this.request<ApiResponse>("/auth/register/doctor", {
+      method: "POST",
+      body: JSON.stringify({ name, email, password, specialization, qualification, experience }),
+      requiresAuth: false,
+      timeout: 10000,
+    });
   }
 
   public async logout(): Promise<void> {
     try {
-      // Try to call logout endpoint (optional - it might fail if not implemented)
       try {
-        await this.request("/auth/logout", {
-          method: "POST",
-          requiresAuth: true
-        });
+        await this.request("/auth/logout", { method: "POST", requiresAuth: true, timeout: 5000 });
         console.log('✅ Logout API call successful');
       } catch (error) {
-        // Ignore logout endpoint errors - we'll still clear local storage
-        console.log('⚠️ Logout endpoint not available or error:', (error as Error).message);
+        console.log('⚠️ Logout endpoint not available:', (error as Error).message);
       }
-    } catch (error) {
-      console.error("Logout error:", error);
     } finally {
-      // Always clear local storage regardless of server response
       this.token = null;
       await AsyncStorage.multiRemove([
         "seharoop_token",
@@ -292,7 +195,6 @@ class ApiService {
         "seharoop_user_data",
         "seharoop_first_login",
       ]);
-      console.log('✅ Local storage cleared, redirecting to login');
       router.replace('/login');
     }
   }
@@ -302,182 +204,243 @@ class ApiService {
     return this.request<ApiResponse>("/medical-form/submit", {
       method: "POST",
       body: JSON.stringify(formData),
+      timeout: 15000,
     });
   }
 
   public async getMedicalForm(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/medical-form");
+    return this.request<ApiResponse>("/medical-form", { timeout: 10000 });
   }
 
   public async checkMedicalFormStatus(): Promise<boolean> {
     try {
       const response = await this.getMedicalForm();
       return response.success && !!response.data;
-    } catch (error) {
+    } catch {
       return false;
     }
   }
 
   // ==================== PATIENT METHODS ====================
   public async getPatientProfile(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/profile");
+    return this.request<ApiResponse>("/patient/profile", { timeout: 10000 });
   }
 
-  public async updatePatientProfile(
-    updates: Record<string, unknown>
-  ): Promise<ApiResponse> {
+  public async updatePatientProfile(updates: Record<string, unknown>): Promise<ApiResponse> {
     return this.request<ApiResponse>("/patient/profile", {
       method: "PUT",
       body: JSON.stringify(updates),
+      timeout: 10000,
     });
   }
 
   public async getPatientHistory(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/history");
+    return this.request<ApiResponse>("/patient/history", { timeout: 10000 });
   }
 
+  // Patient's own summary endpoints (for patient viewing their own data)
   public async getPatientSummary(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/summary");
+    return this.request<ApiResponse>("/patient/summary", { timeout: 15000 });
   }
 
-  public async refreshQRCode(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/refresh-qr", {
-      method: "POST",
-    });
-  }
-
-  // Patient Specialty Summaries (for patient's own view)
   public async getCardiologySummary(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/summary/cardiology");
+    return this.request<ApiResponse>("/patient/summary/cardiology", { timeout: 15000 });
   }
 
   public async getOrthopedicSummary(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/summary/orthopedic");
+    return this.request<ApiResponse>("/patient/summary/orthopedic", { timeout: 15000 });
   }
 
-  // Generate QR for specific specialty (for patient)
+  public async getMySLMSummary(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/slm-summary", {
+      method: "GET",
+      timeout: 120000,
+    });
+  }
+
+  // QR Code methods
+  public async refreshQRCode(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/refresh-qr", {
+      method: "POST",
+      timeout: 15000,
+    });
+  }
+
   public async generateSpecialtyQR(specialty: 'general' | 'cardiology' | 'orthopedic'): Promise<ApiResponse> {
     return this.request<ApiResponse>(`/patient/qr/${specialty}`, {
       method: "POST",
+      timeout: 30000,
+    });
+  }
+
+  // Batch summary methods
+  public async getAllSummaries(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/all-summaries", { timeout: 30000 });
+  }
+
+  public async refreshAllSummaries(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/refresh-summaries", {
+      method: "POST",
+      timeout: 120000,
+    });
+  }
+
+  public async refreshSummaries(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/refresh-summaries", {
+      method: "POST",
+      timeout: 30000,
     });
   }
 
   // ==================== DOCTOR METHODS ====================
   public async getDoctorProfile(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/doctor/profile");
+    return this.request<ApiResponse>("/doctor/profile", { timeout: 10000 });
   }
 
   public async searchPatient(query: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/search?q=${encodeURIComponent(query)}`);
+    return this.request<ApiResponse>(`/doctor/patient/search?q=${encodeURIComponent(query)}`, { timeout: 10000 });
   }
 
   public async getPatientByQR(qrData: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/qr/${encodeURIComponent(qrData)}`);
+    return this.request<ApiResponse>(`/doctor/patient/qr/${encodeURIComponent(qrData)}`, { timeout: 10000 });
   }
 
-  // Doctor viewing patient summaries
+  // Doctor viewing patient summaries (FULL summaries, NOT QR data)
   public async getPatientSummaryDoctor(patientId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/${patientId}/summary`);
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/summary`, {
+      timeout: 30000
+    });
   }
 
   public async getPatientCardiologySummary(patientId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/${patientId}/cardiology-summary`);
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/cardiology-summary`, {
+      timeout: 30000
+    });
   }
 
   public async getPatientOrthopedicSummary(patientId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/${patientId}/orthopedic-summary`);
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/orthopedic-summary`, {
+      timeout: 30000
+    });
+  }
+
+  public async getPatientAllSummaries(patientId: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/all-summaries`, {
+      timeout: 30000
+    });
+  }
+
+  public async refreshPatientSummaries(patientId: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/refresh-summaries`, {
+      method: "POST",
+      timeout: 120000,
+    });
   }
 
   public async getPatientTimeline(patientId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/${patientId}/timeline`);
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/timeline`, { timeout: 10000 });
   }
 
   public async getMyPatients(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/doctor/patients");
+    return this.request<ApiResponse>("/doctor/patients", { timeout: 10000 });
+  }
+
+  // Doctor SLM methods
+  public async getPatientSLMSummaryDoctor(patientId: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>(`/doctor/patient/${patientId}/slm-summary`, {
+      timeout: 120000,
+    });
   }
 
   // ==================== UPLOAD METHODS ====================
   public async uploadFile(file: FileUpload, isMultiple = false): Promise<ApiResponse> {
     const token = await this.getToken();
-
-    if (!token) {
-      throw new Error('No authentication token available');
-    }
+    if (!token) throw new Error('No authentication token available');
 
     const formData = new FormData();
+
     const fileData = {
       uri: file.uri,
       type: file.type || 'application/octet-stream',
       name: file.name,
     };
 
-    formData.append('document', fileData as any);
+    console.log('📤 Uploading file:', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      uri: file.uri,
+      isMultiple
+    });
 
-    console.log('📤 Uploading to:', `${API_BASE_URL}/upload/single`);
-    console.log('📤 With token:', token.substring(0, 20) + '...');
+    formData.append(isMultiple ? 'documents' : 'document', fileData as any);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/upload/single`, {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      console.log(`📤 Uploading to: ${API_BASE_URL}/upload/${isMultiple ? 'multiple' : 'single'}`);
+
+      const response = await fetch(`${API_BASE_URL}/upload/${isMultiple ? 'multiple' : 'single'}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
         },
         body: formData,
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeoutId));
 
-      console.log('📡 Response status:', response.status);
-      console.log('📡 Response headers:', response.headers);
+      console.log('📡 Upload response status:', response.status);
 
       const responseText = await response.text();
-      console.log('📡 Response text:', responseText);
+      console.log('📡 Upload response text:', responseText.substring(0, 200) + '...');
 
       let data;
       try {
         data = JSON.parse(responseText);
       } catch (e) {
-        console.error('❌ Failed to parse JSON:', responseText);
-        throw new Error('Invalid server response');
+        console.error('❌ Failed to parse upload response as JSON:', responseText.substring(0, 500));
+        throw new Error('Invalid server response - not JSON');
       }
 
       if (!response.ok) {
         throw new Error(data.message || `Upload failed with status ${response.status}`);
       }
 
+      console.log('✅ Upload successful:', data);
       return data;
+
     } catch (error: any) {
       console.error('❌ Upload error details:', {
         message: error.message,
-        stack: error.stack,
-        name: error.name
+        name: error.name,
+        code: error.code
       });
+
+      if (error.name === 'AbortError') {
+        throw new Error('Upload timeout after 60 seconds. Please try again with a smaller file.');
+      }
+
+      if (error.message === 'Network request failed' ||
+        error.message.includes('Network') ||
+        error.message.includes('Failed to fetch')) {
+        throw new Error('Cannot connect to server. Please check:\n' +
+          '1. Backend server is running (cd backend && npm run dev)\n' +
+          '2. IP address is correct (' + API_BASE_URL + ')\n' +
+          '3. Device is on same network\n' +
+          '4. Firewall is not blocking the connection');
+      }
+
       throw error;
     }
   }
 
-  // ==================== UPLOAD STATUS METHODS ====================
   public async checkUploadStatus(fileId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/upload/status/${fileId}`);
+    return this.request<ApiResponse>(`/upload/status/${fileId}`, { timeout: 10000 });
   }
 
   public async getMyUploads(): Promise<ApiResponse> {
-    return this.request<ApiResponse>('/upload/my-uploads');
-  }
-
-  // Get AI-generated SLM summary for patient
-  // Get patient SLM summary for doctor
-  public async getPatientSLMSummaryDoctor(patientId: string): Promise<ApiResponse> {
-    return this.request<ApiResponse>(`/doctor/patient/${patientId}/slm-summary`);
-  }
-
-  // Get patient's own SLM summary (for patient view)
-  // In your ApiService class, add a special method for SLM with longer timeout
-  public async getMySLMSummary(): Promise<ApiResponse> {
-    // Use a longer timeout (60 seconds) for SLM generation
-    return this.request<ApiResponse>("/patient/slm-summary", {
-      method: "GET",
-      // You'll need to modify your request method to accept custom timeout
-      // For now, we'll handle it in the backend
-    });
+    return this.request<ApiResponse>('/upload/my-uploads', { timeout: 10000 });
   }
 }
 

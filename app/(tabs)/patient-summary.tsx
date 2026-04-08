@@ -7,7 +7,7 @@ import {
     TouchableOpacity,
     Alert,
     ActivityIndicator,
-    Image,
+    RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -30,25 +30,16 @@ import {
     Clock,
     Scissors,
     X,
-    Brain
+    Brain,
 } from 'lucide-react-native';
 import ApiService from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 type SummaryType = 'general' | 'cardiology' | 'orthopedic' | 'slm';
 
 interface PatientSummary {
-    // From the API response - general summary
-    patientInfo?: {
-        name?: string;
-        patientId?: string;
-        age?: string;
-        sex?: string;
-        bloodGroup?: string;
-        phone?: string;
-        email?: string;
-    };
     patientDemographics?: {
         name?: string;
         patientId?: string;
@@ -69,7 +60,7 @@ interface PatientSummary {
     allergies?: Array<{ name?: string } | string>;
     comorbidConditions?: Array<{ name?: string } | string>;
     chronicDiseases?: Array<{ name?: string } | string>;
-    currentMedications?: Array<{ name?: string; purpose?: string; dosage?: string } | string>;
+    currentMedications?: Array<{ name?: string; purpose?: string; dosage?: string }>;
     pastSurgeries?: Array<{
         name?: string;
         date?: string;
@@ -109,8 +100,16 @@ interface PatientSummary {
             }>;
         }>;
     }>;
-
-    // Cardiology specific
+    diagnoses?: string[];
+    patientInfo?: {
+        name?: string;
+        patientId?: string;
+        age?: string;
+        sex?: string;
+        bloodGroup?: string;
+        phone?: string;
+        email?: string;
+    };
     cardiacDiagnoses?: string[];
     cardiacMedications?: string[];
     cardiacTests?: string[];
@@ -121,12 +120,15 @@ interface PatientSummary {
         weight?: string;
     };
     riskFactors?: string[];
-
-    // Orthopedic specific
     orthopedicDiagnoses?: string[];
     orthopedicMedications?: string[];
     imagingResults?: string[];
     mobilityStatus?: string;
+    lastUpdated?: string;
+    documentCount?: number;
+    version?: number;
+    hospitals?: string[];
+    doctors?: string[];
 }
 
 interface SLMSummary {
@@ -139,16 +141,20 @@ interface SLMSummary {
 
 export default function PatientSummary() {
     const { patientId } = useLocalSearchParams();
+    const { userRole, userData: authUserData } = useAuth();
     const [summary, setSummary] = useState<PatientSummary | null>(null);
     const [cardiologySummary, setCardiologySummary] = useState<any>(null);
     const [orthopedicSummary, setOrthopedicSummary] = useState<any>(null);
     const [slmSummary, setSlmSummary] = useState<SLMSummary | null>(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [loadingCardiology, setLoadingCardiology] = useState(false);
     const [loadingOrthopedic, setLoadingOrthopedic] = useState(false);
     const [loadingSLM, setLoadingSLM] = useState(false);
     const [activeTab, setActiveTab] = useState<SummaryType>('general');
     const router = useRouter();
+
+    const isOwnSummary = userRole === 'patient';
 
     useEffect(() => {
         loadPatientSummary();
@@ -157,15 +163,30 @@ export default function PatientSummary() {
     useEffect(() => {
         if (activeTab === 'slm' && !slmSummary && !loadingSLM) {
             loadSLMSummary();
+        } else if (activeTab === 'cardiology' && !cardiologySummary && !loadingCardiology) {
+            loadCardiologySummary();
+        } else if (activeTab === 'orthopedic' && !orthopedicSummary && !loadingOrthopedic) {
+            loadOrthopedicSummary();
         }
     }, [activeTab]);
+
+    useEffect(() => {
+        console.log('📊 Summary data updated:', summary);
+    }, [summary]);
 
     const loadPatientSummary = async () => {
         try {
             setLoading(true);
-            const response = await ApiService.getPatientSummaryDoctor(patientId as string);
-            console.log('📊 General Summary Response:', JSON.stringify(response.data, null, 2));
-            if (response.success) {
+
+            let response;
+            if (isOwnSummary) {
+                response = await ApiService.getPatientSummary();
+            } else {
+                response = await ApiService.getPatientSummaryDoctor(patientId as string);
+            }
+
+            console.log('📊 Full Summary Response:', JSON.stringify(response.data, null, 2));
+            if (response.success && response.data) {
                 setSummary(response.data);
             } else {
                 Alert.alert('Error', 'Failed to load patient summary');
@@ -178,10 +199,23 @@ export default function PatientSummary() {
         }
     };
 
+    const onRefresh = async () => {
+        setRefreshing(true);
+        await loadPatientSummary();
+        setRefreshing(false);
+    };
+
     const loadCardiologySummary = async () => {
         try {
             setLoadingCardiology(true);
-            const response = await ApiService.getPatientCardiologySummary(patientId as string);
+
+            let response;
+            if (isOwnSummary) {
+                response = await ApiService.getCardiologySummary();
+            } else {
+                response = await ApiService.getPatientCardiologySummary(patientId as string);
+            }
+
             console.log('❤️ Cardiology Summary Response:', JSON.stringify(response.data, null, 2));
             if (response.success) {
                 setCardiologySummary(response.data);
@@ -196,7 +230,14 @@ export default function PatientSummary() {
     const loadOrthopedicSummary = async () => {
         try {
             setLoadingOrthopedic(true);
-            const response = await ApiService.getPatientOrthopedicSummary(patientId as string);
+
+            let response;
+            if (isOwnSummary) {
+                response = await ApiService.getOrthopedicSummary();
+            } else {
+                response = await ApiService.getPatientOrthopedicSummary(patientId as string);
+            }
+
             console.log('🦴 Orthopedic Summary Response:', JSON.stringify(response.data, null, 2));
             if (response.success) {
                 setOrthopedicSummary(response.data);
@@ -211,8 +252,14 @@ export default function PatientSummary() {
     const loadSLMSummary = async () => {
         try {
             setLoadingSLM(true);
-            // For doctor view, we need patient-specific SLM summary
-            const response = await ApiService.getPatientSLMSummaryDoctor(patientId as string);
+
+            let response;
+            if (isOwnSummary) {
+                response = await ApiService.getMySLMSummary();
+            } else {
+                response = await ApiService.getPatientSLMSummaryDoctor(patientId as string);
+            }
+
             if (response.success) {
                 setSlmSummary(response.data);
             }
@@ -225,11 +272,6 @@ export default function PatientSummary() {
 
     const handleTabChange = (tab: SummaryType) => {
         setActiveTab(tab);
-        if (tab === 'cardiology' && !cardiologySummary) {
-            loadCardiologySummary();
-        } else if (tab === 'orthopedic' && !orthopedicSummary) {
-            loadOrthopedicSummary();
-        }
     };
 
     const downloadSummary = async () => {
@@ -239,7 +281,6 @@ export default function PatientSummary() {
             let textSummary = `PATIENT MEDICAL SUMMARY\n`;
             textSummary += `=====================\n\n`;
 
-            // Patient Info
             const patientName = summary.patientDemographics?.name || summary.patientInfo?.name || 'N/A';
             const patientId_ = summary.patientDemographics?.patientId || summary.patientInfo?.patientId || 'N/A';
             const bloodGroup = summary.medicalProfile?.bloodGroup || summary.patientInfo?.bloodGroup || 'Not specified';
@@ -251,119 +292,174 @@ export default function PatientSummary() {
             textSummary += `Blood Group: ${bloodGroup}\n`;
             textSummary += `Age/Gender: ${age}/${gender}\n\n`;
 
-            // Address
-            if (summary.address) {
+            if (summary.address && summary.address !== 'NA') {
                 textSummary += `ADDRESS\n`;
                 textSummary += `-------\n`;
                 textSummary += `${summary.address}\n\n`;
             }
 
-            // Emergency Contact
-            if (summary.emergencyContact) {
+            if (summary.emergencyContact && summary.emergencyContact.name !== 'NA') {
                 textSummary += `EMERGENCY CONTACT\n`;
                 textSummary += `-----------------\n`;
-                textSummary += `Name: ${summary.emergencyContact.name || 'Not provided'}\n`;
-                textSummary += `Relationship: ${summary.emergencyContact.relationship || 'Not provided'}\n`;
-                textSummary += `Phone: ${summary.emergencyContact.phone || 'Not provided'}\n\n`;
+                textSummary += `Name: ${summary.emergencyContact.name}\n`;
+                textSummary += `Relationship: ${summary.emergencyContact.relationship}\n`;
+                textSummary += `Phone: ${summary.emergencyContact.phone}\n\n`;
             }
 
             // Allergies
             if (summary.allergies && summary.allergies.length > 0) {
-                textSummary += `ALLERGIES\n`;
-                textSummary += `---------\n`;
-                summary.allergies.forEach(item => {
-                    const allergyName = typeof item === 'string' ? item : item.name;
-                    if (allergyName && allergyName !== 'NA') {
-                        textSummary += `• ${allergyName}\n`;
-                    }
+                const hasRealAllergies = summary.allergies.some(item => {
+                    const name = typeof item === 'string' ? item : item.name;
+                    return name && name !== 'NA';
                 });
-                textSummary += '\n';
+                if (hasRealAllergies) {
+                    textSummary += `ALLERGIES\n`;
+                    textSummary += `---------\n`;
+                    summary.allergies.forEach(item => {
+                        const allergyName = typeof item === 'string' ? item : item.name;
+                        if (allergyName && allergyName !== 'NA') {
+                            textSummary += `• ${allergyName}\n`;
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Comorbid Conditions
             if (summary.comorbidConditions && summary.comorbidConditions.length > 0) {
-                textSummary += `COMORBID CONDITIONS\n`;
-                textSummary += `-------------------\n`;
-                summary.comorbidConditions.forEach(item => {
-                    const conditionName = typeof item === 'string' ? item : item.name;
-                    if (conditionName && conditionName !== 'NA') {
-                        textSummary += `• ${conditionName}\n`;
-                    }
+                const hasRealConditions = summary.comorbidConditions.some(item => {
+                    const name = typeof item === 'string' ? item : item.name;
+                    return name && name !== 'NA';
                 });
-                textSummary += '\n';
+                if (hasRealConditions) {
+                    textSummary += `COMORBID CONDITIONS\n`;
+                    textSummary += `-------------------\n`;
+                    summary.comorbidConditions.forEach(item => {
+                        const conditionName = typeof item === 'string' ? item : item.name;
+                        if (conditionName && conditionName !== 'NA') {
+                            textSummary += `• ${conditionName}\n`;
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Chronic Diseases
             if (summary.chronicDiseases && summary.chronicDiseases.length > 0) {
-                textSummary += `CHRONIC DISEASES\n`;
-                textSummary += `----------------\n`;
-                summary.chronicDiseases.forEach(item => {
-                    const diseaseName = typeof item === 'string' ? item : item.name;
-                    if (diseaseName && diseaseName !== 'NA') {
-                        textSummary += `• ${diseaseName}\n`;
-                    }
+                const hasRealDiseases = summary.chronicDiseases.some(item => {
+                    const name = typeof item === 'string' ? item : item.name;
+                    return name && name !== 'NA';
                 });
-                textSummary += '\n';
+                if (hasRealDiseases) {
+                    textSummary += `CHRONIC DISEASES\n`;
+                    textSummary += `----------------\n`;
+                    summary.chronicDiseases.forEach(item => {
+                        const diseaseName = typeof item === 'string' ? item : item.name;
+                        if (diseaseName && diseaseName !== 'NA') {
+                            textSummary += `• ${diseaseName}\n`;
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Current Medications
             if (summary.currentMedications && summary.currentMedications.length > 0) {
-                textSummary += `CURRENT MEDICATIONS\n`;
-                textSummary += `-------------------\n`;
-                summary.currentMedications.forEach(item => {
-                    if (typeof item === 'string') {
-                        if (item !== 'NA') textSummary += `• ${item}\n`;
-                    } else {
-                        textSummary += `• ${item.name || 'Unknown'}`;
-                        if (item.dosage && item.dosage !== 'NA') textSummary += ` (${item.dosage})`;
-                        if (item.purpose && item.purpose !== 'NA') textSummary += ` - ${item.purpose}`;
-                        textSummary += '\n';
-                    }
-                });
-                textSummary += '\n';
+                const hasRealMeds = summary.currentMedications.some(med => med.name && med.name !== 'NA');
+                if (hasRealMeds) {
+                    textSummary += `CURRENT MEDICATIONS\n`;
+                    textSummary += `-------------------\n`;
+                    summary.currentMedications.forEach(item => {
+                        if (item.name && item.name !== 'NA') {
+                            textSummary += `• ${item.name}`;
+                            if (item.dosage && item.dosage !== 'NA') textSummary += ` (${item.dosage})`;
+                            if (item.purpose && item.purpose !== 'NA') textSummary += ` - ${item.purpose}`;
+                            textSummary += '\n';
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Past Surgeries
             if (summary.pastSurgeries && summary.pastSurgeries.length > 0) {
-                textSummary += `PAST SURGERIES\n`;
-                textSummary += `--------------\n`;
-                summary.pastSurgeries.forEach(s => {
-                    if (s.name && s.name !== 'NA') {
-                        textSummary += `• ${s.name}`;
-                        if (s.date && s.date !== 'NA') textSummary += ` - ${s.date}`;
-                        if (s.hospital && s.hospital !== 'NA') textSummary += ` at ${s.hospital}`;
-                        textSummary += '\n';
-                    }
-                });
-                textSummary += '\n';
+                const hasRealSurgeries = summary.pastSurgeries.some(s => s.name && s.name !== 'NA');
+                if (hasRealSurgeries) {
+                    textSummary += `PAST SURGERIES\n`;
+                    textSummary += `--------------\n`;
+                    summary.pastSurgeries.forEach(s => {
+                        if (s.name && s.name !== 'NA') {
+                            textSummary += `• ${s.name}`;
+                            if (s.date && s.date !== 'NA') textSummary += ` - ${s.date}`;
+                            if (s.hospital && s.hospital !== 'NA') textSummary += ` at ${s.hospital}`;
+                            textSummary += '\n';
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Major Surgeries/Illness
             if (summary.majorSurgeriesOrIllness && summary.majorSurgeriesOrIllness.length > 0) {
-                textSummary += `MAJOR SURGERIES / ILLNESS\n`;
-                textSummary += `-------------------------\n`;
-                summary.majorSurgeriesOrIllness.forEach(i => {
-                    if (i.name && i.name !== 'NA') {
-                        textSummary += `• ${i.name}`;
-                        if (i.date && i.date !== 'NA') textSummary += ` - ${i.date}`;
-                        if (i.notes && i.notes !== 'NA') textSummary += ` (${i.notes})`;
-                        textSummary += '\n';
-                    }
-                });
-                textSummary += '\n';
+                const hasRealMajor = summary.majorSurgeriesOrIllness.some(i => i.name && i.name !== 'NA');
+                if (hasRealMajor) {
+                    textSummary += `MAJOR SURGERIES / ILLNESS\n`;
+                    textSummary += `-------------------------\n`;
+                    summary.majorSurgeriesOrIllness.forEach(i => {
+                        if (i.name && i.name !== 'NA') {
+                            textSummary += `• ${i.name}`;
+                            if (i.date && i.date !== 'NA') textSummary += ` - ${i.date}`;
+                            if (i.notes && i.notes !== 'NA') textSummary += ` (${i.notes})`;
+                            textSummary += '\n';
+                        }
+                    });
+                    textSummary += '\n';
+                }
+            }
+
+            // Previous Interventions
+            if (summary.previousInterventions && summary.previousInterventions.length > 0) {
+                const hasRealInterventions = summary.previousInterventions.some(i => i.name && i.name !== 'NA');
+                if (hasRealInterventions) {
+                    textSummary += `PREVIOUS INTERVENTIONS\n`;
+                    textSummary += `----------------------\n`;
+                    summary.previousInterventions.forEach(i => {
+                        if (i.name && i.name !== 'NA') {
+                            textSummary += `• ${i.name}`;
+                            if (i.date && i.date !== 'NA') textSummary += ` - ${i.date}`;
+                            if (i.hospital && i.hospital !== 'NA') textSummary += ` at ${i.hospital}`;
+                            textSummary += '\n';
+                        }
+                    });
+                    textSummary += '\n';
+                }
             }
 
             // Blood Thinner History
             if (summary.bloodThinnerHistory && summary.bloodThinnerHistory.length > 0) {
-                textSummary += `BLOOD THINNER HISTORY\n`;
-                textSummary += `---------------------\n`;
-                summary.bloodThinnerHistory.forEach(bt => {
-                    if (bt.name && bt.name !== 'NA') {
-                        textSummary += `• ${bt.name}`;
-                        if (bt.type && bt.type !== 'NA') textSummary += ` (${bt.type})`;
-                        if (bt.reason && bt.reason !== 'NA') textSummary += ` - ${bt.reason}`;
-                        textSummary += '\n';
-                    }
+                const hasRealThinners = summary.bloodThinnerHistory.some(bt => bt.name && bt.name !== 'NA');
+                if (hasRealThinners) {
+                    textSummary += `BLOOD THINNER HISTORY\n`;
+                    textSummary += `---------------------\n`;
+                    summary.bloodThinnerHistory.forEach(bt => {
+                        if (bt.name && bt.name !== 'NA') {
+                            textSummary += `• ${bt.name}`;
+                            if (bt.type && bt.type !== 'NA') textSummary += ` (${bt.type})`;
+                            if (bt.duration && bt.duration !== 'NA') textSummary += ` - ${bt.duration}`;
+                            if (bt.reason && bt.reason !== 'NA') textSummary += ` - ${bt.reason}`;
+                            textSummary += '\n';
+                        }
+                    });
+                    textSummary += '\n';
+                }
+            }
+
+            // Hospitals
+            if (summary.hospitals && summary.hospitals.length > 0 && summary.hospitals[0] !== 'NA') {
+                textSummary += `HOSPITALS\n`;
+                textSummary += `---------\n`;
+                summary.hospitals.forEach(hospital => {
+                    textSummary += `• ${hospital}\n`;
                 });
                 textSummary += '\n';
             }
@@ -433,7 +529,7 @@ export default function PatientSummary() {
 
             <TouchableOpacity
                 style={[styles.tab, activeTab === 'slm' && styles.activeSLMTab]}
-                onPress={() => setActiveTab('slm')}
+                onPress={() => handleTabChange('slm')}
             >
                 <Brain size={16} color={activeTab === 'slm' ? '#8B5CF6' : '#64748B'} />
                 <Text style={[styles.tabText, activeTab === 'slm' && styles.activeSLMTabText]}>
@@ -446,66 +542,42 @@ export default function PatientSummary() {
     const renderGeneralSummary = () => {
         if (!summary) return null;
 
-        // Helper function to get string value from item that could be string or object
-        const getItemName = (item: any): string => {
-            if (!item) return '';
-            if (typeof item === 'string') return item;
-            return item.name || '';
-        };
-
         return (
             <>
-                {/* Patient Info Card */}
+                {/* PATIENT DEMOGRAPHICS */}
                 <View style={styles.card}>
-                    <View style={styles.patientHeader}>
-                        <View style={styles.avatar}>
-                            <User size={32} color="#FFFFFF" />
-                        </View>
-                        <View style={styles.patientHeaderInfo}>
-                            <Text style={styles.patientName}>
-                                {summary.patientDemographics?.name || summary.patientInfo?.name || 'Name not available'}
-                            </Text>
-                            <Text style={styles.patientId}>
-                                ID: {summary.patientDemographics?.patientId || summary.patientInfo?.patientId || 'N/A'}
-                            </Text>
-                        </View>
-                        {(summary.medicalProfile?.bloodGroup || summary.patientInfo?.bloodGroup) && (
-                            <View style={styles.bloodGroupBadge}>
-                                <Text style={styles.bloodGroupText}>
-                                    {summary.medicalProfile?.bloodGroup || summary.patientInfo?.bloodGroup}
-                                </Text>
-                            </View>
-                        )}
+                    <Text style={styles.cardTitle}>PATIENT DEMOGRAPHICS</Text>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Name:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.name || 'NA'}</Text>
                     </View>
-
-                    <View style={styles.patientDetails}>
-                        <View style={styles.detailItem}>
-                            <Calendar size={16} color="#64748B" />
-                            <Text style={styles.detailText}>
-                                {summary.patientDemographics?.age || summary.patientInfo?.age || 'Age N/A'} • {' '}
-                                {summary.patientDemographics?.gender || summary.patientInfo?.sex || 'Gender N/A'}
-                            </Text>
-                        </View>
-                        {(summary.patientDemographics?.phone || summary.patientInfo?.phone) && (
-                            <View style={styles.detailItem}>
-                                <Phone size={16} color="#64748B" />
-                                <Text style={styles.detailText}>
-                                    {summary.patientDemographics?.phone || summary.patientInfo?.phone}
-                                </Text>
-                            </View>
-                        )}
-                        {(summary.patientDemographics?.email || summary.patientInfo?.email) && (
-                            <View style={styles.detailItem}>
-                                <Mail size={16} color="#64748B" />
-                                <Text style={styles.detailText}>
-                                    {summary.patientDemographics?.email || summary.patientInfo?.email}
-                                </Text>
-                            </View>
-                        )}
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Patient ID:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.patientId || 'NA'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Date of Birth:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.dateOfBirth || 'NA'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Age:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.age || 'NA'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Gender:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.gender || 'NA'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Email:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.email || 'NA'}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Phone:</Text>
+                        <Text style={styles.infoValue}>{summary.patientDemographics?.phone || 'NA'}</Text>
                     </View>
                 </View>
 
-                {/* Address */}
+                {/* ADDRESS */}
                 {summary.address && summary.address !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>ADDRESS</Text>
@@ -513,185 +585,171 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Medical Profile */}
-                {summary.medicalProfile && (
-                    <View style={styles.card}>
-                        <Text style={styles.cardTitle}>MEDICAL PROFILE</Text>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Blood Group:</Text>
-                            <Text style={styles.infoValue}>{summary.medicalProfile.bloodGroup || 'NA'}</Text>
-                        </View>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Diabetic:</Text>
-                            <Text style={styles.infoValue}>{summary.medicalProfile.isDiabetic || 'NA'}</Text>
-                        </View>
-                        {summary.medicalProfile.diabetesType && summary.medicalProfile.diabetesType !== 'NA' && (
-                            <View style={styles.infoRow}>
-                                <Text style={styles.infoLabel}>Diabetes Type:</Text>
-                                <Text style={styles.infoValue}>{summary.medicalProfile.diabetesType}</Text>
-                            </View>
-                        )}
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>Thyroid Condition:</Text>
-                            <Text style={styles.infoValue}>{summary.medicalProfile.thyroidCondition || 'NA'}</Text>
-                        </View>
+                {/* MEDICAL PROFILE */}
+                <View style={styles.card}>
+                    <Text style={styles.cardTitle}>MEDICAL PROFILE</Text>
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Blood Group:</Text>
+                        <Text style={styles.infoValue}>{summary.medicalProfile?.bloodGroup || 'NA'}</Text>
                     </View>
-                )}
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Diabetic:</Text>
+                        <Text style={styles.infoValue}>{summary.medicalProfile?.isDiabetic || 'NA'}</Text>
+                    </View>
+                    {summary.medicalProfile?.diabetesType && summary.medicalProfile?.diabetesType !== 'NA' && (
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>Diabetes Type:</Text>
+                            <Text style={styles.infoValue}>{summary.medicalProfile?.diabetesType}</Text>
+                        </View>
+                    )}
+                    <View style={styles.infoRow}>
+                        <Text style={styles.infoLabel}>Thyroid Condition:</Text>
+                        <Text style={styles.infoValue}>{summary.medicalProfile?.thyroidCondition || 'NA'}</Text>
+                    </View>
+                </View>
 
-                {/* Allergies */}
-                {summary.allergies && summary.allergies.length > 0 && (
+                {/* ALLERGIES */}
+                {summary.allergies && summary.allergies.length > 0 && summary.allergies[0]?.name !== 'NA' && (
                     <View style={[styles.card, styles.criticalCard]}>
                         <Text style={[styles.cardTitle, styles.criticalTitle]}>ALLERGIES</Text>
-                        {summary.allergies.map((item, index) => {
-                            const name = getItemName(item);
-                            return name && name !== 'NA' ? (
-                                <Text key={index} style={[styles.listItem, styles.allergyText]}>• {name}</Text>
-                            ) : index === 0 ? (
-                                <Text key={index} style={styles.listItem}>• None reported</Text>
-                            ) : null;
+                        {summary.allergies.map((allergy, i) => {
+                            const allergyName = typeof allergy === 'string' ? allergy : allergy.name;
+                            if (allergyName && allergyName !== 'NA') {
+                                return <Text key={i} style={[styles.listItem, styles.allergyText]}>• {allergyName}</Text>;
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Comorbid Conditions */}
-                {summary.comorbidConditions && summary.comorbidConditions.length > 0 && (
+                {/* COMORBID CONDITIONS */}
+                {summary.comorbidConditions && summary.comorbidConditions.length > 0 && summary.comorbidConditions[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>COMORBID CONDITIONS</Text>
-                        {summary.comorbidConditions.map((item, index) => {
-                            const name = getItemName(item);
-                            return name && name !== 'NA' ? (
-                                <Text key={index} style={styles.listItem}>• {name}</Text>
-                            ) : index === 0 ? (
-                                <Text key={index} style={styles.listItem}>• None reported</Text>
-                            ) : null;
+                        {summary.comorbidConditions.map((condition, i) => {
+                            const conditionName = typeof condition === 'string' ? condition : condition.name;
+                            if (conditionName && conditionName !== 'NA') {
+                                return <Text key={i} style={styles.listItem}>• {conditionName}</Text>;
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Chronic Diseases */}
-                {summary.chronicDiseases && summary.chronicDiseases.length > 0 && (
+                {/* CHRONIC DISEASES */}
+                {summary.chronicDiseases && summary.chronicDiseases.length > 0 && summary.chronicDiseases[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>CHRONIC DISEASES</Text>
-                        {summary.chronicDiseases.map((item, index) => {
-                            const name = getItemName(item);
-                            return name && name !== 'NA' ? (
-                                <Text key={index} style={styles.listItem}>• {name}</Text>
-                            ) : index === 0 ? (
-                                <Text key={index} style={styles.listItem}>• None reported</Text>
-                            ) : null;
+                        {summary.chronicDiseases.map((disease, i) => {
+                            const diseaseName = typeof disease === 'string' ? disease : disease.name;
+                            if (diseaseName && diseaseName !== 'NA') {
+                                return <Text key={i} style={styles.listItem}>• {diseaseName}</Text>;
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Current Medications */}
-                {summary.currentMedications && summary.currentMedications.length > 0 && (
+                {/* CURRENT MEDICATIONS */}
+                {summary.currentMedications && summary.currentMedications.length > 0 && summary.currentMedications[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>CURRENT MEDICATIONS</Text>
-                        {summary.currentMedications.map((item, index) => {
-                            if (typeof item === 'string') {
-                                return item !== 'NA' ? (
-                                    <Text key={index} style={styles.listItem}>• {item}</Text>
-                                ) : null;
-                            } else {
-                                return item.name && item.name !== 'NA' ? (
-                                    <View key={index} style={styles.medicationItem}>
-                                        <Text style={styles.medicationName}>• {item.name}</Text>
-                                        {item.dosage && item.dosage !== 'NA' && (
-                                            <Text style={styles.medicationDetail}>  Dosage: {item.dosage}</Text>
-                                        )}
-                                        {item.purpose && item.purpose !== 'NA' && (
-                                            <Text style={styles.medicationDetail}>  Purpose: {item.purpose}</Text>
-                                        )}
+                        {summary.currentMedications.map((med, i) => {
+                            if (med.name && med.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.medicationItem}>
+                                        <Text style={styles.medicationName}>• {med.name}</Text>
+                                        {med.dosage && med.dosage !== 'NA' && <Text style={styles.medicationDetail}>  Dosage: {med.dosage}</Text>}
+                                        {med.purpose && med.purpose !== 'NA' && <Text style={styles.medicationDetail}>  Purpose: {med.purpose}</Text>}
                                     </View>
-                                ) : null;
+                                );
                             }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Past Surgeries */}
-                {summary.pastSurgeries && summary.pastSurgeries.length > 0 && (
+                {/* PAST SURGERIES */}
+                {summary.pastSurgeries && summary.pastSurgeries.length > 0 && summary.pastSurgeries[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>PAST SURGERIES</Text>
-                        {summary.pastSurgeries.map((surgery, index) => {
-                            if (!surgery.name || surgery.name === 'NA') return null;
-                            return (
-                                <View key={index} style={styles.historyItem}>
-                                    <Text style={styles.historyTitle}>• {surgery.name}</Text>
-                                    {surgery.date && surgery.date !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Date: {surgery.date}</Text>
-                                    )}
-                                    {surgery.hospital && surgery.hospital !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Hospital: {surgery.hospital}</Text>
-                                    )}
-                                </View>
-                            );
+                        {summary.pastSurgeries.map((surgery, i) => {
+                            if (surgery.name && surgery.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.historyItem}>
+                                        <Text style={styles.historyTitle}>• {surgery.name}</Text>
+                                        {surgery.date && surgery.date !== 'NA' && <Text style={styles.historyDetail}>  Date: {surgery.date}</Text>}
+                                        {surgery.hospital && surgery.hospital !== 'NA' && <Text style={styles.historyDetail}>  Hospital: {surgery.hospital}</Text>}
+                                        {surgery.surgeon && surgery.surgeon !== 'NA' && <Text style={styles.historyDetail}>  Surgeon: {surgery.surgeon}</Text>}
+                                    </View>
+                                );
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Major Surgeries / Illness */}
-                {summary.majorSurgeriesOrIllness && summary.majorSurgeriesOrIllness.length > 0 && (
+                {/* MAJOR SURGERIES / ILLNESS */}
+                {summary.majorSurgeriesOrIllness && summary.majorSurgeriesOrIllness.length > 0 && summary.majorSurgeriesOrIllness[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>MAJOR SURGERIES / ILLNESS</Text>
-                        {summary.majorSurgeriesOrIllness.map((illness, index) => {
-                            if (!illness.name || illness.name === 'NA') return null;
-                            return (
-                                <View key={index} style={styles.historyItem}>
-                                    <Text style={styles.historyTitle}>• {illness.name}</Text>
-                                    {illness.date && illness.date !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Date: {illness.date}</Text>
-                                    )}
-                                    {illness.notes && illness.notes !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Notes: {illness.notes}</Text>
-                                    )}
-                                </View>
-                            );
+                        {summary.majorSurgeriesOrIllness.map((illness, i) => {
+                            if (illness.name && illness.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.historyItem}>
+                                        <Text style={styles.historyTitle}>• {illness.name}</Text>
+                                        {illness.date && illness.date !== 'NA' && <Text style={styles.historyDetail}>  Date: {illness.date}</Text>}
+                                        {illness.hospital && illness.hospital !== 'NA' && <Text style={styles.historyDetail}>  Hospital: {illness.hospital}</Text>}
+                                        {illness.notes && illness.notes !== 'NA' && <Text style={styles.historyDetail}>  Notes: {illness.notes}</Text>}
+                                    </View>
+                                );
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Previous Interventions */}
-                {summary.previousInterventions && summary.previousInterventions.length > 0 && (
+                {/* PREVIOUS INTERVENTIONS */}
+                {summary.previousInterventions && summary.previousInterventions.length > 0 && summary.previousInterventions[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>PREVIOUS INTERVENTIONS</Text>
-                        {summary.previousInterventions.map((intervention, index) => {
-                            if (!intervention.name || intervention.name === 'NA') return null;
-                            return (
-                                <View key={index} style={styles.historyItem}>
-                                    <Text style={styles.historyTitle}>• {intervention.name}</Text>
-                                    {intervention.date && intervention.date !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Date: {intervention.date}</Text>
-                                    )}
-                                </View>
-                            );
+                        {summary.previousInterventions.map((intervention, i) => {
+                            if (intervention.name && intervention.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.historyItem}>
+                                        <Text style={styles.historyTitle}>• {intervention.name}</Text>
+                                        {intervention.date && intervention.date !== 'NA' && <Text style={styles.historyDetail}>  Date: {intervention.date}</Text>}
+                                        {intervention.hospital && intervention.hospital !== 'NA' && <Text style={styles.historyDetail}>  Hospital: {intervention.hospital}</Text>}
+                                    </View>
+                                );
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Blood Thinner History */}
-                {summary.bloodThinnerHistory && summary.bloodThinnerHistory.length > 0 && (
+                {/* BLOOD THINNER HISTORY */}
+                {summary.bloodThinnerHistory && summary.bloodThinnerHistory.length > 0 && summary.bloodThinnerHistory[0]?.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>BLOOD THINNER HISTORY</Text>
-                        {summary.bloodThinnerHistory.map((bt, index) => {
-                            if (!bt.name || bt.name === 'NA') return null;
-                            return (
-                                <View key={index} style={styles.historyItem}>
-                                    <Text style={styles.historyTitle}>• {bt.name}</Text>
-                                    {bt.type && bt.type !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Type: {bt.type}</Text>
-                                    )}
-                                    {bt.reason && bt.reason !== 'NA' && (
-                                        <Text style={styles.historyDetail}>  Reason: {bt.reason}</Text>
-                                    )}
-                                </View>
-                            );
+                        {summary.bloodThinnerHistory.map((bt, i) => {
+                            if (bt.name && bt.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.historyItem}>
+                                        <Text style={styles.historyTitle}>• {bt.name}</Text>
+                                        {bt.type && bt.type !== 'NA' && <Text style={styles.historyDetail}>  Type: {bt.type}</Text>}
+                                        {bt.duration && bt.duration !== 'NA' && <Text style={styles.historyDetail}>  Duration: {bt.duration}</Text>}
+                                        {bt.reason && bt.reason !== 'NA' && <Text style={styles.historyDetail}>  Reason: {bt.reason}</Text>}
+                                    </View>
+                                );
+                            }
+                            return null;
                         })}
                     </View>
                 )}
 
-                {/* Emergency Contact */}
-                {summary.emergencyContact && (
+                {/* EMERGENCY CONTACT */}
+                {summary.emergencyContact && summary.emergencyContact.name !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>EMERGENCY CONTACT</Text>
                         <View style={styles.infoRow}>
@@ -706,6 +764,41 @@ export default function PatientSummary() {
                             <Text style={styles.infoLabel}>Phone:</Text>
                             <Text style={styles.infoValue}>{summary.emergencyContact.phone || 'NA'}</Text>
                         </View>
+                    </View>
+                )}
+
+                {/* HOSPITALS */}
+                {summary.hospitals && summary.hospitals.length > 0 && summary.hospitals[0] !== 'NA' && (
+                    <View style={styles.card}>
+                        <Text style={styles.cardTitle}>HOSPITALS</Text>
+                        {summary.hospitals.map((hospital, i) => (
+                            <Text key={i} style={styles.listItem}>• {hospital}</Text>
+                        ))}
+                    </View>
+                )}
+
+                {/* MEDICAL HISTORY */}
+                {summary.medicalHistory && summary.medicalHistory.length > 0 && (
+                    <View style={styles.card}>
+                        <Text style={styles.cardTitle}>MEDICAL HISTORY</Text>
+                        {summary.medicalHistory.map((yearData, yIndex) => (
+                            <View key={yIndex} style={styles.yearContainer}>
+                                <Text style={styles.yearTitle}>YEAR {yearData.year}</Text>
+                                {yearData.months?.map((monthData, mIndex) => (
+                                    <View key={mIndex} style={styles.monthContainer}>
+                                        <Text style={styles.monthTitle}>{monthData.month}</Text>
+                                        {monthData.records?.map((record, rIndex) => (
+                                            <View key={rIndex} style={styles.recordItem}>
+                                                <Text style={styles.recordDate}>
+                                                    • {record.day} {monthData.month} – {record.type}
+                                                </Text>
+                                                <Text style={styles.recordDescription}>  {record.description}</Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                ))}
+                            </View>
+                        ))}
                     </View>
                 )}
             </>
@@ -736,7 +829,6 @@ export default function PatientSummary() {
 
         return (
             <>
-                {/* Cardiac Diagnoses */}
                 {cardiologySummary.cardiacDiagnoses?.length > 0 && (
                     <View style={[styles.card, { borderLeftColor: '#DC2626', borderLeftWidth: 4 }]}>
                         <Text style={[styles.cardTitle, { color: '#DC2626' }]}>Cardiac Conditions</Text>
@@ -749,20 +841,26 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Cardiac Medications */}
                 {cardiologySummary.cardiacMedications?.length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Cardiac Medications</Text>
-                        {cardiologySummary.cardiacMedications.map((m: string, i: number) => (
-                            <View key={i} style={styles.medicationItem}>
-                                <Pill size={16} color="#DC2626" />
-                                <Text style={styles.medicationName}>{m}</Text>
-                            </View>
-                        ))}
+                        {cardiologySummary.cardiacMedications.map((m: any, i: number) => {
+                            if (typeof m === 'object' && m.name && m.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.medicationItem}>
+                                        <Text style={styles.medicationName}>• {m.name}</Text>
+                                        {m.dosage && m.dosage !== 'NA' && <Text style={styles.medicationDetail}>  Dosage: {m.dosage}</Text>}
+                                        {m.purpose && m.purpose !== 'NA' && <Text style={styles.medicationDetail}>  Purpose: {m.purpose}</Text>}
+                                    </View>
+                                );
+                            } else if (typeof m === 'string' && m !== 'NA') {
+                                return <Text key={i} style={styles.listItem}>• {m}</Text>;
+                            }
+                            return null;
+                        })}
                     </View>
                 )}
 
-                {/* Vital Signs */}
                 {cardiologySummary.vitals && Object.keys(cardiologySummary.vitals).length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Vital Signs</Text>
@@ -775,7 +873,6 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Cardiac Tests */}
                 {cardiologySummary.cardiacTests?.length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Cardiac Tests</Text>
@@ -788,7 +885,6 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Risk Factors */}
                 {cardiologySummary.riskFactors?.length > 0 && (
                     <View style={[styles.card, styles.riskCard]}>
                         <Text style={[styles.cardTitle, styles.riskTitle]}>Cardiac Risk Factors</Text>
@@ -828,7 +924,6 @@ export default function PatientSummary() {
 
         return (
             <>
-                {/* Orthopedic Diagnoses */}
                 {orthopedicSummary.orthopedicDiagnoses?.length > 0 && (
                     <View style={[styles.card, { borderLeftColor: '#059669', borderLeftWidth: 4 }]}>
                         <Text style={[styles.cardTitle, { color: '#059669' }]}>Orthopedic Conditions</Text>
@@ -841,20 +936,26 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Orthopedic Medications */}
                 {orthopedicSummary.orthopedicMedications?.length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Pain/Inflammation Medications</Text>
-                        {orthopedicSummary.orthopedicMedications.map((m: string, i: number) => (
-                            <View key={i} style={styles.medicationItem}>
-                                <Pill size={16} color="#059669" />
-                                <Text style={styles.medicationName}>{m}</Text>
-                            </View>
-                        ))}
+                        {orthopedicSummary.orthopedicMedications.map((m: any, i: number) => {
+                            if (typeof m === 'object' && m.name && m.name !== 'NA') {
+                                return (
+                                    <View key={i} style={styles.medicationItem}>
+                                        <Text style={styles.medicationName}>• {m.name}</Text>
+                                        {m.dosage && m.dosage !== 'NA' && <Text style={styles.medicationDetail}>  Dosage: {m.dosage}</Text>}
+                                        {m.purpose && m.purpose !== 'NA' && <Text style={styles.medicationDetail}>  Purpose: {m.purpose}</Text>}
+                                    </View>
+                                );
+                            } else if (typeof m === 'string' && m !== 'NA') {
+                                return <Text key={i} style={styles.listItem}>• {m}</Text>;
+                            }
+                            return null;
+                        })}
                     </View>
                 )}
 
-                {/* Imaging Results */}
                 {orthopedicSummary.imagingResults?.length > 0 && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Imaging Results</Text>
@@ -867,8 +968,7 @@ export default function PatientSummary() {
                     </View>
                 )}
 
-                {/* Mobility Status */}
-                {orthopedicSummary.mobilityStatus && (
+                {orthopedicSummary.mobilityStatus && orthopedicSummary.mobilityStatus !== 'NA' && (
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Mobility Status</Text>
                         <View style={styles.mobilityContainer}>
@@ -968,20 +1068,20 @@ export default function PatientSummary() {
                     <ArrowLeft size={24} color="#2563EB" />
                 </TouchableOpacity>
                 <Text style={styles.title}>Patient Summary</Text>
-                {activeTab === 'slm' ? (
-                    <TouchableOpacity style={styles.downloadButton} onPress={downloadSLMSummary}>
-                        <Download size={20} color="#8B5CF6" />
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity style={styles.downloadButton} onPress={downloadSummary}>
-                        <Download size={20} color="#2563EB" />
-                    </TouchableOpacity>
-                )}
+                <TouchableOpacity style={styles.downloadButton} onPress={activeTab === 'slm' ? downloadSLMSummary : downloadSummary}>
+                    <Download size={20} color={activeTab === 'slm' ? '#8B5CF6' : '#2563EB'} />
+                </TouchableOpacity>
             </View>
 
             {renderTabBar()}
 
-            <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                style={styles.content}
+                showsVerticalScrollIndicator={false}
+                refreshControl={
+                    <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                }
+            >
                 {activeTab === 'general' && renderGeneralSummary()}
                 {activeTab === 'cardiology' && renderCardiologySummary()}
                 {activeTab === 'orthopedic' && renderOrthopedicSummary()}
@@ -1123,7 +1223,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#FEF2F2',
     },
     cardTitle: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: '700',
         color: '#2563EB',
         marginBottom: 12,
@@ -1134,56 +1234,6 @@ const styles = StyleSheet.create({
     },
     riskTitle: {
         color: '#DC2626',
-    },
-    patientHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: '#2563EB',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 12,
-    },
-    patientHeaderInfo: {
-        flex: 1,
-    },
-    patientName: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: '#1E293B',
-    },
-    patientId: {
-        fontSize: 14,
-        color: '#64748B',
-        marginTop: 2,
-    },
-    bloodGroupBadge: {
-        backgroundColor: '#EFF6FF',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
-    },
-    bloodGroupText: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#2563EB',
-    },
-    patientDetails: {
-        gap: 8,
-    },
-    detailItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    detailText: {
-        fontSize: 14,
-        color: '#4B5563',
     },
     infoRow: {
         flexDirection: 'row',
@@ -1222,7 +1272,7 @@ const styles = StyleSheet.create({
     },
     medicationName: {
         fontSize: 14,
-        fontWeight: '500',
+        fontWeight: '600',
         color: '#1E293B',
     },
     medicationDetail: {
@@ -1232,10 +1282,7 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     historyItem: {
-        marginBottom: 10,
-        paddingBottom: 6,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
+        marginBottom: 12,
     },
     historyTitle: {
         fontSize: 14,
@@ -1246,6 +1293,41 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#64748B',
         marginLeft: 16,
+        marginTop: 2,
+    },
+    yearContainer: {
+        marginBottom: 16,
+    },
+    yearTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#2563EB',
+        marginTop: 8,
+        marginBottom: 8,
+    },
+    monthContainer: {
+        marginLeft: 8,
+        marginBottom: 12,
+    },
+    monthTitle: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#4B5563',
+        marginBottom: 6,
+    },
+    recordItem: {
+        marginBottom: 8,
+        paddingLeft: 8,
+    },
+    recordDate: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#1E293B',
+    },
+    recordDescription: {
+        fontSize: 13,
+        color: '#6B7280',
+        marginLeft: 8,
         marginTop: 2,
     },
     diagnosisItem: {
@@ -1305,7 +1387,6 @@ const styles = StyleSheet.create({
         color: '#1E293B',
     },
     slmContainer: {
-        flex: 1,
         backgroundColor: '#FFFFFF',
         borderRadius: 16,
         padding: 20,

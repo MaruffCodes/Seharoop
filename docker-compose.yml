@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+
+  backend:
+    build: ./backend
+    container_name: seharoop_backend
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - python-service
+      - slm-service
+    environment:
+      - PYTHON_SERVICE_URL=http://python-service:8000
+      - SLM_SERVICE_URL=http://slm-service:8001
+    command: npm run dev
+
+  python-service:
+    build: ./backend/python-service
+    container_name: python_service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/python-service:/app
+    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+
+  slm-service:
+    build: ./backend/slm-service
+    container_name: slm_service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend/slm-service:/app
+    command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload

@@ -1,5 +1,12 @@
 const mongoose = require('mongoose');
 
+// Define medication sub-schema for structured medication data
+const medicationSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    purpose: { type: String, default: 'NA' },
+    dosage: { type: String, default: 'NA' }
+}, { _id: false });
+
 const processedDocumentSchema = new mongoose.Schema({
     fileId: {
         type: String,
@@ -27,15 +34,12 @@ const processedDocumentSchema = new mongoose.Schema({
         default: ''
     },
 
-    // Extracted medical data - make sure these are arrays with defaults
+    // Extracted medical data
     diagnoses: [{
         type: String,
         default: []
     }],
-    medications: [{
-        type: String,
-        default: []
-    }],
+    medications: [medicationSchema],
     labResults: [{
         type: String,
         default: []
@@ -57,6 +61,13 @@ const processedDocumentSchema = new mongoose.Schema({
         type: String,
         default: []
     }],
+
+    // SLM Generated Summaries - Changed to Mixed type to accept objects
+    slmSummaries: {
+        general: { type: mongoose.Schema.Types.Mixed, default: null },
+        cardiology: { type: mongoose.Schema.Types.Mixed, default: null },
+        orthopedic: { type: mongoose.Schema.Types.Mixed, default: null }
+    },
 
     // Entities extracted
     entities: [{
@@ -103,11 +114,54 @@ const processedDocumentSchema = new mongoose.Schema({
         processingDate: Date,
         textLength: Number,
         ocrConfidence: Number,
+        slmGenerated: Boolean,
         _id: false
     }
 }, {
     timestamps: true,
-    strict: false // Allow additional fields if needed
+    strict: false
+});
+
+// Pre-save middleware to ensure medications are properly formatted
+processedDocumentSchema.pre('save', function (next) {
+    try {
+        if (!Array.isArray(this.medications)) {
+            this.medications = [];
+        }
+
+        this.medications = this.medications.map(med => {
+            if (med && typeof med === 'object') {
+                return {
+                    name: med.name || 'Unknown Medication',
+                    purpose: med.purpose || 'NA',
+                    dosage: med.dosage || 'NA'
+                };
+            }
+            if (typeof med === 'string') {
+                return {
+                    name: med || 'Unknown Medication',
+                    purpose: 'NA',
+                    dosage: 'NA'
+                };
+            }
+            return {
+                name: 'Unknown Medication',
+                purpose: 'NA',
+                dosage: 'NA'
+            };
+        });
+
+        next();
+    } catch (error) {
+        next(error);
+    }
+});
+
+processedDocumentSchema.pre('validate', function (next) {
+    if (this.medications && this.medications.length > 0) {
+        console.log(`📊 Pre-validate: Processing ${this.medications.length} medications`);
+    }
+    next();
 });
 
 // Indexes for faster queries
@@ -121,8 +175,32 @@ processedDocumentSchema.virtual('documentUrl').get(function () {
     return `/uploads/${this.fileId}.${ext}`;
 });
 
-// Ensure virtuals are included in JSON
-processedDocumentSchema.set('toJSON', { virtuals: true });
+processedDocumentSchema.set('toJSON', {
+    virtuals: true,
+    transform: function (doc, ret) {
+        if (ret.medications) {
+            ret.medications = ret.medications.map(med => ({
+                name: med.name,
+                purpose: med.purpose,
+                dosage: med.dosage
+            }));
+        }
+        return ret;
+    }
+});
+
 processedDocumentSchema.set('toObject', { virtuals: true });
+
+// Static method to find documents by user ID
+processedDocumentSchema.statics.findByUserId = function (userId) {
+    return this.find({ userId }).sort({ processedAt: -1 });
+};
+
+// Static method to find recent documents
+processedDocumentSchema.statics.findRecent = function (userId, limit = 10) {
+    return this.find({ userId })
+        .sort({ processedAt: -1 })
+        .limit(limit);
+};
 
 module.exports = mongoose.model('ProcessedDocument', processedDocumentSchema);

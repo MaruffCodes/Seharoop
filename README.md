@@ -42,6 +42,19 @@ SEHAROOP enables:
                          │   (Queue)     │          │   Storage    │
                          └───────────────┘          └──────────────┘
 ```
+## 🐳 Docker Setup (Recommended)
+
+The easiest way to run the entire system:
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/yourusername/seharoop.git
+cd seharoop
+docker-compose up --build
+
+###2. Frontend 
+cd seharoop/ 
+npm run dev
 
 ## 📦 Prerequisites
 
@@ -204,7 +217,7 @@ python test_model.py
 npm install
 
 # Update API URL in services/api.ts if needed
-# Default: http://192.168.1.4:5001/api
+# Default: http://192.168.1.2:5001/api
 ```
 
 ## 🎯 Running the Complete System

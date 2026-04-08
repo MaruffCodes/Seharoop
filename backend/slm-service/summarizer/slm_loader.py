@@ -31,16 +31,14 @@ class SLMLoader:
         
         self.model = None
         self.model_params = {
-            "n_ctx": 4096,  # Increased from 2048 for longer summaries
+            "n_ctx": 2048,  # Reduced from 4096 for faster processing
             "n_threads": 4,
             "n_gpu_layers": 0,
             "temperature": 0.7,
-            "max_tokens": 2048,  # Increased from 1024
+            "max_tokens": 1024,  # Reduced from 2048 for faster generation
             "top_p": 0.95,
             "top_k": 40,
             "repeat_penalty": 1.1,
-            "frequency_penalty": 0.0,
-            "presence_penalty": 0.0,
         }
         
     def load_model(self) -> bool:
@@ -83,10 +81,10 @@ class SLMLoader:
                 logger.warning(f"⚠️ First load attempt failed: {e}")
                 
                 # Second attempt with lower context (for memory)
-                logger.info("🔄 Trying with lower context (2048)...")
+                logger.info("🔄 Trying with lower context (1024)...")
                 self.model = Llama(
                     model_path=self.model_path,
-                    n_ctx=2048,
+                    n_ctx=1024,
                     n_threads=self.model_params["n_threads"],
                     verbose=False
                 )
@@ -111,7 +109,7 @@ class SLMLoader:
             
             logger.info(f"🔄 Generating with max_tokens={params['max_tokens']}, temperature={params['temperature']}")
             
-            # Generate response with better parameters for longer output
+            # Generate response
             response = self.model(
                 prompt,
                 max_tokens=params["max_tokens"],
@@ -119,9 +117,7 @@ class SLMLoader:
                 top_p=params["top_p"],
                 top_k=params["top_k"],
                 repeat_penalty=params["repeat_penalty"],
-                frequency_penalty=params.get("frequency_penalty", 0.0),
-                presence_penalty=params.get("presence_penalty", 0.0),
-                stop=["\n\n\n", "Human:", "Assistant:", "<|im_end|>"],  # Less aggressive stopping
+                stop=["\n\n\n", "Human:", "Assistant:", "<|im_end|>"],
                 echo=False
             )
             

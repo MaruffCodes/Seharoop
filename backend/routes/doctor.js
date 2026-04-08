@@ -139,7 +139,7 @@ router.get('/patient/qr/:qrData', auth, isDoctor, async (req, res) => {
   }
 });
 
-// Get patient general summary for doctor
+// Get patient general summary for doctor (from stored summaries)
 router.get('/patient/:patientId/summary', auth, isDoctor, async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -156,20 +156,30 @@ router.get('/patient/:patientId/summary', auth, isDoctor, async (req, res) => {
       });
     }
 
-    const medicalForm = await PatientMedicalForm.findOne({
-      patientId: patient._id
-    });
+    const summaryGenerator = require('../services/summaryGenerator');
+    const summaries = await summaryGenerator.getPatientSummaries(patient._id);
 
-    const recentDocs = await ProcessedDocument.find({ userId: patient._id })
-      .sort({ processedAt: -1 })
-      .limit(50);
+    if (!summaries) {
+      // Generate if not exists
+      const medicalForm = await PatientMedicalForm.findOne({ patientId: patient._id });
+      const allDocs = await ProcessedDocument.find({ userId: patient._id })
+        .sort({ processedAt: -1 });
 
-    // Generate general summary
-    const generalSummary = summaryGenerator.generateGeneralSummary(patient, medicalForm, recentDocs);
+      const newSummaries = await summaryGenerator.generateAndSaveAllSummaries(
+        patient,
+        medicalForm,
+        allDocs
+      );
+
+      return res.json({
+        success: true,
+        data: newSummaries.general
+      });
+    }
 
     res.json({
       success: true,
-      data: generalSummary
+      data: summaries.general
     });
   } catch (error) {
     console.error('Get patient summary error:', error);
@@ -180,7 +190,7 @@ router.get('/patient/:patientId/summary', auth, isDoctor, async (req, res) => {
   }
 });
 
-// Get patient cardiology summary for doctor
+// Get patient cardiology summary for doctor (from stored summaries)
 router.get('/patient/:patientId/cardiology-summary', auth, isDoctor, async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -197,20 +207,29 @@ router.get('/patient/:patientId/cardiology-summary', auth, isDoctor, async (req,
       });
     }
 
-    const medicalForm = await PatientMedicalForm.findOne({
-      patientId: patient._id
-    });
+    const summaryGenerator = require('../services/summaryGenerator');
+    const summaries = await summaryGenerator.getPatientSummaries(patient._id);
 
-    const recentDocs = await ProcessedDocument.find({ userId: patient._id })
-      .sort({ processedAt: -1 })
-      .limit(50);
+    if (!summaries || !summaries.cardiology) {
+      const medicalForm = await PatientMedicalForm.findOne({ patientId: patient._id });
+      const allDocs = await ProcessedDocument.find({ userId: patient._id })
+        .sort({ processedAt: -1 });
 
-    // Generate cardiology summary
-    const cardiologySummary = summaryGenerator.generateCardiologySummary(patient, medicalForm, recentDocs);
+      const newSummaries = await summaryGenerator.generateAndSaveAllSummaries(
+        patient,
+        medicalForm,
+        allDocs
+      );
+
+      return res.json({
+        success: true,
+        data: newSummaries.cardiology
+      });
+    }
 
     res.json({
       success: true,
-      data: cardiologySummary
+      data: summaries.cardiology
     });
   } catch (error) {
     console.error('Get cardiology summary error:', error);
@@ -221,7 +240,7 @@ router.get('/patient/:patientId/cardiology-summary', auth, isDoctor, async (req,
   }
 });
 
-// Get patient orthopedic summary for doctor
+// Get patient orthopedic summary for doctor (from stored summaries)
 router.get('/patient/:patientId/orthopedic-summary', auth, isDoctor, async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -238,20 +257,29 @@ router.get('/patient/:patientId/orthopedic-summary', auth, isDoctor, async (req,
       });
     }
 
-    const medicalForm = await PatientMedicalForm.findOne({
-      patientId: patient._id
-    });
+    const summaryGenerator = require('../services/summaryGenerator');
+    const summaries = await summaryGenerator.getPatientSummaries(patient._id);
 
-    const recentDocs = await ProcessedDocument.find({ userId: patient._id })
-      .sort({ processedAt: -1 })
-      .limit(50);
+    if (!summaries || !summaries.orthopedic) {
+      const medicalForm = await PatientMedicalForm.findOne({ patientId: patient._id });
+      const allDocs = await ProcessedDocument.find({ userId: patient._id })
+        .sort({ processedAt: -1 });
 
-    // Generate orthopedic summary
-    const orthopedicSummary = summaryGenerator.generateOrthopedicSummary(patient, medicalForm, recentDocs);
+      const newSummaries = await summaryGenerator.generateAndSaveAllSummaries(
+        patient,
+        medicalForm,
+        allDocs
+      );
+
+      return res.json({
+        success: true,
+        data: newSummaries.orthopedic
+      });
+    }
 
     res.json({
       success: true,
-      data: orthopedicSummary
+      data: summaries.orthopedic
     });
   } catch (error) {
     console.error('Get orthopedic summary error:', error);
@@ -262,104 +290,8 @@ router.get('/patient/:patientId/orthopedic-summary', auth, isDoctor, async (req,
   }
 });
 
-// Get patient timeline
-router.get('/patient/:patientId/timeline', auth, isDoctor, async (req, res) => {
-  try {
-    const { patientId } = req.params;
-
-    const patient = await User.findOne({
-      patientId,
-      role: 'patient'
-    });
-
-    if (!patient) {
-      return res.status(404).json({
-        success: false,
-        message: 'Patient not found'
-      });
-    }
-
-    const medicalForm = await PatientMedicalForm.findOne({
-      patientId: patient._id
-    });
-
-    const timeline = [];
-
-    // Add medical records from patient history
-    if (patient.medicalHistory) {
-      patient.medicalHistory.forEach(yearData => {
-        yearData.months?.forEach(monthData => {
-          monthData.records?.forEach(record => {
-            timeline.push({
-              date: record.date,
-              type: record.type,
-              title: record.description,
-              description: `${monthData.month} ${yearData.year}`,
-              source: 'medical_record'
-            });
-          });
-        });
-      });
-    }
-
-    // Add medical form creation to timeline
-    if (medicalForm?.createdAt) {
-      timeline.push({
-        date: medicalForm.createdAt,
-        type: 'form_creation',
-        title: 'Medical Form Created',
-        description: 'Initial medical information recorded',
-        source: 'medical_form'
-      });
-    }
-
-    // Add form updates to timeline
-    if (medicalForm?.completionStatus?.lastUpdated) {
-      timeline.push({
-        date: medicalForm.completionStatus.lastUpdated,
-        type: 'form_update',
-        title: 'Medical Form Updated',
-        description: 'Medical information was updated',
-        source: 'medical_form'
-      });
-    }
-
-    // Sort by date (newest first)
-    timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    res.json({
-      success: true,
-      data: timeline
-    });
-  } catch (error) {
-    console.error('Get patient timeline error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
-// Get doctor's patient list
-router.get('/patients', auth, isDoctor, async (req, res) => {
-  try {
-    const doctor = await Doctor.findById(req.user._id)
-      .populate('patients', 'name patientId bloodGroup email phone');
-
-    res.json({
-      success: true,
-      data: doctor?.patients || []
-    });
-  } catch (error) {
-    console.error('Get doctor patients error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-// Get patient SLM-generated summary for doctor
-router.get('/patient/:patientId/slm-summary', auth, isDoctor, async (req, res) => {
+// Get all patient summaries for doctor
+router.get('/patient/:patientId/all-summaries', auth, isDoctor, async (req, res) => {
   try {
     const { patientId } = req.params;
 
@@ -375,111 +307,77 @@ router.get('/patient/:patientId/slm-summary', auth, isDoctor, async (req, res) =
       });
     }
 
-    const medicalForm = await PatientMedicalForm.findOne({
-      patientId: patient._id
-    });
+    const summaryGenerator = require('../services/summaryGenerator');
+    const summaries = await summaryGenerator.getPatientSummaries(patient._id);
 
-    const recentDocs = await ProcessedDocument.find({ userId: patient._id })
-      .sort({ processedAt: -1 })
-      .limit(50);
+    if (!summaries) {
+      const medicalForm = await PatientMedicalForm.findOne({ patientId: patient._id });
+      const allDocs = await ProcessedDocument.find({ userId: patient._id })
+        .sort({ processedAt: -1 });
 
-    // Prepare patient data for SLM
-    const patientData = {
-      name: patient.name,
-      patientId: patient.patientId,
-      age: medicalForm?.personalInfo?.dateOfBirth
-        ? new Date().getFullYear() - new Date(medicalForm.personalInfo.dateOfBirth).getFullYear()
-        : null,
-      gender: medicalForm?.personalInfo?.gender || null,
-      bloodGroup: patient.bloodGroup || medicalForm?.personalInfo?.bloodGroup || null,
-      email: patient.email,
-      phone: medicalForm?.personalInfo?.phone || null,
-      address: medicalForm?.personalInfo?.address ?
-        `${medicalForm.personalInfo.address.street || ''}, ${medicalForm.personalInfo.address.city || ''}, ${medicalForm.personalInfo.address.state || ''} ${medicalForm.personalInfo.address.pincode || ''}`.trim() : null
-    };
-
-    // Collect extracted data from documents
-    const allDiagnoses = new Set();
-    const allMedications = new Set();
-    const allLabResults = new Set();
-    const allAllergies = new Set();
-    const allChronicDiseases = new Set();
-    const allComorbidConditions = new Set();
-    const allPastSurgeries = [];
-
-    recentDocs.forEach(doc => {
-      if (doc.diagnoses) doc.diagnoses.forEach(d => allDiagnoses.add(d));
-      if (doc.medications) doc.medications.forEach(m => allMedications.add(m));
-      if (doc.labResults) doc.labResults.forEach(l => allLabResults.add(l));
-      if (doc.allergies) doc.allergies.forEach(a => allAllergies.add(a));
-    });
-
-    // Add data from medical form
-    if (medicalForm) {
-      if (medicalForm.medicalConditions?.chronicDiseases) {
-        medicalForm.medicalConditions.chronicDiseases.forEach(d => allChronicDiseases.add(d));
-      }
-      if (medicalForm.medicalConditions?.comorbidConditions) {
-        medicalForm.medicalConditions.comorbidConditions.forEach(c => allComorbidConditions.add(c));
-      }
-      if (medicalForm.medicalConditions?.medicationAllergies) {
-        medicalForm.medicalConditions.medicationAllergies.forEach(a => allAllergies.add(a.medication));
-      }
-      if (medicalForm.surgicalHistory?.pastSurgeries) {
-        medicalForm.surgicalHistory.pastSurgeries.forEach(s => {
-          allPastSurgeries.push({
-            name: s.surgery,
-            date: s.date ? new Date(s.date).toLocaleDateString() : null,
-            hospital: s.hospital
-          });
-        });
-      }
-    }
-
-    const extractedData = {
-      diagnoses: Array.from(allDiagnoses),
-      medications: Array.from(allMedications),
-      labResults: Array.from(allLabResults),
-      allergies: Array.from(allAllergies),
-      chronicDiseases: Array.from(allChronicDiseases),
-      comorbidConditions: Array.from(allComorbidConditions),
-      pastSurgeries: allPastSurgeries
-    };
-
-    // Call SLM service to generate summary
-    const slmClient = require('../services/slmClient');
-
-    try {
-      const slmSummary = await slmClient.generateSummary(
-        patientData,
-        extractedData,
-        'general'  // We want the general summary format
+      const newSummaries = await summaryGenerator.generateAndSaveAllSummaries(
+        patient,
+        medicalForm,
+        allDocs
       );
 
-      res.json({
+      return res.json({
         success: true,
-        data: slmSummary
-      });
-    } catch (slmError) {
-      console.error('SLM service error:', slmError);
-
-      // Return a fallback response if SLM service fails
-      res.json({
-        success: true,
-        data: {
-          success: false,
-          summary: "AI summary generation is temporarily unavailable. Please try again later.",
-          type: "general",
-          timestamp: new Date().toISOString()
-        }
+        data: newSummaries
       });
     }
 
+    res.json({
+      success: true,
+      data: summaries
+    });
   } catch (error) {
-    console.error('Error generating SLM summary:', error);
+    console.error('Get all summaries error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to generate AI summary'
+      message: 'Server error'
+    });
+  }
+});
+
+// Force refresh patient summaries for doctor
+router.post('/patient/:patientId/refresh-summaries', auth, isDoctor, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    const patient = await User.findOne({
+      patientId,
+      role: 'patient'
+    }).select('-password');
+
+    if (!patient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Patient not found'
+      });
+    }
+
+    const summaryGenerator = require('../services/summaryGenerator');
+    const medicalForm = await PatientMedicalForm.findOne({ patientId: patient._id });
+    const allDocs = await ProcessedDocument.find({ userId: patient._id })
+      .sort({ processedAt: -1 });
+
+    const newSummaries = await summaryGenerator.generateAndSaveAllSummaries(
+      patient,
+      medicalForm,
+      allDocs
+    );
+
+    res.json({
+      success: true,
+      message: 'Patient summaries refreshed successfully',
+      data: newSummaries
+    });
+  } catch (error) {
+    console.error('Refresh summaries error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
     });
   }
 });

@@ -10,7 +10,7 @@ const medicalHistorySchema = new mongoose.Schema({
       description: { type: String, required: true },
       type: {
         type: String,
-        enum: ['lab', 'imaging', 'exam', 'prescription', 'surgery', 'consultation'],
+        enum: ['lab', 'imaging', 'exam', 'prescription', 'surgery', 'consultation', 'document', 'form_submission'],
         required: true
       },
       documents: [{
@@ -46,7 +46,7 @@ const userSchema = new mongoose.Schema({
     enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', null],
     default: null
   },
-  hasMedicalForm: { type: Boolean, default: false }, // Add this field
+  hasMedicalForm: { type: Boolean, default: false },
 
   // Existing fields
   isDiabetic: { type: Boolean, default: false },
@@ -103,7 +103,11 @@ const userSchema = new mongoose.Schema({
     phone: String
   },
   dateOfBirth: Date,
-  gender: { type: String, enum: ['Male', 'Female', 'Other'] },
+  gender: {
+    type: String,
+    enum: ['Male', 'Female', 'Other', null],
+    default: null
+  },
   phone: String,
   address: {
     street: String,
@@ -113,6 +117,15 @@ const userSchema = new mongoose.Schema({
     country: { type: String, default: 'India' }
   }
 }, { timestamps: true });
+
+// Pre-save middleware to handle empty strings for enum fields
+userSchema.pre('save', function (next) {
+  if (this.gender === '') this.gender = null;
+  if (this.bloodGroup === '') this.bloodGroup = null;
+  if (this.diabetesType === '') this.diabetesType = null;
+  if (this.thyroidCondition === '') this.thyroidCondition = null;
+  next();
+});
 
 // 🔐 Hash password before saving
 userSchema.pre('save', async function (next) {

@@ -25,7 +25,7 @@ export default function TabLayout() {
     );
   }
 
-  // If not logged in, don't show any tabs (they'll be redirected to login)
+  // If not logged in, don't show any tabs
   if (!isLoggedIn) {
     return null;
   }
@@ -62,13 +62,13 @@ export default function TabLayout() {
             tabBarIcon: ({ size, color }) => <FileText size={size} color={color} />,
           }}
         />
-        {/* Hide all other screens */}
         <Tabs.Screen name="patient-dashboard" options={{ href: null }} />
         <Tabs.Screen name="FullScreenQR" options={{ href: null }} />
         <Tabs.Screen name="patient-profile" options={{ href: null }} />
         <Tabs.Screen name="doctor-dashboard" options={{ href: null }} />
         <Tabs.Screen name="patient-search" options={{ href: null }} />
         <Tabs.Screen name="Scanner" options={{ href: null }} />
+        <Tabs.Screen name="patient-summary" options={{ href: null }} />
       </Tabs>
     );
   }
@@ -87,7 +87,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="FullScreenQR"
           options={{
-            title: 'My QR',
+            title: 'QR Code',
             tabBarIcon: ({ size, color }) => <QrCode size={size} color={color} />,
           }}
         />
@@ -98,7 +98,6 @@ export default function TabLayout() {
             tabBarIcon: ({ size, color }) => <User size={size} color={color} />,
           }}
         />
-        {/* Hide other screens */}
         <Tabs.Screen name="patient-medicalForm" options={{ href: null }} />
         <Tabs.Screen name="doctor-dashboard" options={{ href: null }} />
         <Tabs.Screen name="patient-search" options={{ href: null }} />
@@ -133,7 +132,6 @@ export default function TabLayout() {
             tabBarIcon: ({ size, color }) => <Scan size={size} color={color} />,
           }}
         />
-        {/* Hide other screens */}
         <Tabs.Screen name="patient-dashboard" options={{ href: null }} />
         <Tabs.Screen name="patient-medicalForm" options={{ href: null }} />
         <Tabs.Screen name="FullScreenQR" options={{ href: null }} />

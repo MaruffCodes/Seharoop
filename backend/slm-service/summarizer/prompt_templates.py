@@ -1,90 +1,191 @@
 """Prompt templates for medical summary generation"""
 import json
+from typing import Dict, Any, List, Optional
 
 class PromptTemplates:
     """Collection of prompt templates for different summary types"""
     
     @staticmethod
-    def get_general_summary_prompt(patient_data: dict, extracted_data: dict) -> str:
+    def _safe_string(value: Any) -> str:
+        """Convert any value to a safe string, handling None and non-string types"""
+        if value is None:
+            return "Not available"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return str(value).strip()
+    
+    @staticmethod
+    def _safe_list(items: Optional[List[Any]], default: str = "None") -> str:
+        """Convert list to comma-separated string, handling empty or None"""
+        if not items:
+            return default
+        processed = []
+        for item in items:
+            if isinstance(item, dict):
+                if 'name' in item:
+                    processed.append(item['name'])
+                else:
+                    processed.append(json.dumps(item))
+            else:
+                processed.append(PromptTemplates._safe_string(item))
+        return ', '.join(processed) if processed else default
+    
+    @staticmethod
+    def _format_medications(medications: Optional[List[Any]]) -> str:
+        """Format medications list into readable string with purpose and dosage"""
+        if not medications:
+            return "None"
+        
+        formatted = []
+        for med in medications:
+            if isinstance(med, dict):
+                name = med.get('name', 'Unknown')
+                purpose = med.get('purpose', 'NA')
+                dosage = med.get('dosage', 'NA')
+                
+                if purpose != 'NA' and dosage != 'NA':
+                    formatted.append(f"{name} – {purpose} ({dosage})")
+                elif purpose != 'NA':
+                    formatted.append(f"{name} – {purpose}")
+                elif dosage != 'NA':
+                    formatted.append(f"{name} ({dosage})")
+                else:
+                    formatted.append(name)
+            else:
+                formatted.append(PromptTemplates._safe_string(med))
+        
+        return ', '.join(formatted)
+    
+    @staticmethod
+    def _format_bullet_list(items_str: str) -> str:
+        """Convert comma-separated string to bullet points"""
+        if not items_str or items_str == "None":
+            return "• None reported"
+        
+        items = [item.strip() for item in items_str.split(',')]
+        return '\n'.join([f"• {item}" for item in items if item])
+    
+    @staticmethod
+    def _format_medication_list(medications: List[Any]) -> str:
+        """Format medications as bullet points with purpose and dosage"""
+        if not medications:
+            return "• No current medications"
+        
+        result = []
+        for med in medications[:5]:
+            if isinstance(med, dict):
+                name = med.get('name', 'Unknown')
+                purpose = med.get('purpose', 'NA')
+                dosage = med.get('dosage', 'NA')
+                
+                if purpose != 'NA' and dosage != 'NA':
+                    result.append(f"• {name} – {purpose} ({dosage})")
+                elif purpose != 'NA':
+                    result.append(f"• {name} – {purpose}")
+                elif dosage != 'NA':
+                    result.append(f"• {name} ({dosage})")
+                else:
+                    result.append(f"• {name}")
+            else:
+                result.append(f"• {med}")
+        
+        return '\n'.join(result)
+    
+    @staticmethod
+    def get_general_summary_prompt(patient_data: Dict[str, Any], extracted_data: Dict[str, Any]) -> str:
         """Generate prompt for general medical summary"""
         
-        # Format the extracted data nicely
-        diagnoses_str = ', '.join(extracted_data.get('diagnoses', ['None'])) if extracted_data.get('diagnoses') else 'None'
-        medications_str = ', '.join(extracted_data.get('medications', ['None'])) if extracted_data.get('medications') else 'None'
-        lab_results_str = ', '.join(extracted_data.get('labResults', ['None'])) if extracted_data.get('labResults') else 'None'
-        allergies_str = ', '.join(extracted_data.get('allergies', ['None'])) if extracted_data.get('allergies') else 'None'
-        chronic_str = ', '.join(extracted_data.get('chronicDiseases', ['None'])) if extracted_data.get('chronicDiseases') else 'None'
-        comorbid_str = ', '.join(extracted_data.get('comorbidConditions', ['None'])) if extracted_data.get('comorbidConditions') else 'None'
+        patient_info = {
+            'name': patient_data.get('name', 'Unknown'),
+            'patient_id': patient_data.get('patientId', 'Unknown'),
+            'age': patient_data.get('age', 'Unknown'),
+            'gender': patient_data.get('gender', 'Unknown'),
+            'blood_group': patient_data.get('bloodGroup', 'Unknown'),
+            'email': patient_data.get('email', 'Not available'),
+            'phone': patient_data.get('phone', 'Not available'),
+            'address': patient_data.get('address', 'Not available')
+        }
+        
+        diagnoses = PromptTemplates._safe_list(extracted_data.get('diagnoses', []))
+        medications = PromptTemplates._format_medications(extracted_data.get('medications', []))
+        lab_results = PromptTemplates._safe_list(extracted_data.get('labResults', []))
+        allergies = PromptTemplates._safe_list(extracted_data.get('allergies', []))
+        chronic_diseases = PromptTemplates._safe_list(extracted_data.get('chronicDiseases', []))
+        comorbid_conditions = PromptTemplates._safe_list(extracted_data.get('comorbidConditions', []))
+        
+        past_surgeries = extracted_data.get('pastSurgeries', [])
+        surgeries_str = ""
+        if past_surgeries and len(past_surgeries) > 0:
+            for surgery in past_surgeries[:3]:
+                if isinstance(surgery, dict):
+                    name = surgery.get('name', surgery.get('surgery', 'Unknown'))
+                    date = surgery.get('date', 'Date not available')
+                    hospital = surgery.get('hospital', 'Hospital not available')
+                    surgeries_str += f"\n• {name}\n  Date: {date}\n  Hospital: {hospital}\n"
+        else:
+            surgeries_str = "\n• No past surgeries recorded"
         
         prompt = f"""You are a medical AI assistant. Generate a comprehensive patient summary in the exact format shown below. Fill in all available information. Use "Not available" for missing fields.
 
 PATIENT INFORMATION:
-- Name: {patient_data.get('name', 'Unknown')}
-- Patient ID: {patient_data.get('patientId', 'Unknown')}
-- Age: {patient_data.get('age', 'Unknown')}
-- Gender: {patient_data.get('gender', 'Unknown')}
-- Blood Group: {patient_data.get('bloodGroup', 'Unknown')}
-- Email: {patient_data.get('email', 'Not available')}
-- Phone: {patient_data.get('phone', 'Not available')}
+- Name: {patient_info['name']}
+- Patient ID: {patient_info['patient_id']}
+- Age: {patient_info['age']}
+- Gender: {patient_info['gender']}
+- Blood Group: {patient_info['blood_group']}
+- Email: {patient_info['email']}
+- Phone: {patient_info['phone']}
 
 MEDICAL DATA:
-- Diagnoses: {diagnoses_str}
-- Medications: {medications_str}
-- Lab Results: {lab_results_str}
-- Allergies: {allergies_str}
-- Chronic Diseases: {chronic_str}
-- Comorbid Conditions: {comorbid_str}
+- Diagnoses: {diagnoses}
+- Medications: {medications}
+- Lab Results: {lab_results}
+- Allergies: {allergies}
+- Chronic Diseases: {chronic_diseases}
+- Comorbid Conditions: {comorbid_conditions}
 
 Generate the summary in this EXACT format:
 
 GENERAL PATIENT SUMMARY
 
 PATIENT DEMOGRAPHICS
-Name: [Full Name]
-Patient ID: [ID]
+Name: {patient_info['name']}
+Patient ID: {patient_info['patient_id']}
 Date of Birth: [DOB if available]
-Age: [Age]
-Gender: [Gender]
-Email: [Email]
-Phone: [Phone]
+Age: {patient_info['age']}
+Gender: {patient_info['gender']}
+Email: {patient_info['email']}
+Phone: {patient_info['phone']}
 
 ADDRESS
-[Full Address or "Not available"]
+{patient_info['address']}
 
 ---
 MEDICAL PROFILE
-Blood Group: [Blood Group]
+Blood Group: {patient_info['blood_group']}
 Diabetic: [Yes/No]
 Diabetes Type: [Type if applicable]
 Thyroid Condition: [Yes/No with details]
 
 ---
 ALLERGIES
-• [Allergy 1]
-• [Allergy 2]
+{PromptTemplates._format_bullet_list(allergies)}
 
 ---
 COMORBID CONDITIONS
-• [Condition 1]
-• [Condition 2]
+{PromptTemplates._format_bullet_list(comorbid_conditions)}
 
 ---
 CHRONIC DISEASES
-• [Disease 1]
-• [Disease 2]
+{PromptTemplates._format_bullet_list(chronic_diseases)}
 
 ---
 CURRENT MEDICATIONS
-• [Medication 1] – [Purpose] ([Dosage])
-• [Medication 2] – [Purpose] ([Dosage])
+{PromptTemplates._format_medication_list(extracted_data.get('medications', []))}
 
 ---
 PAST SURGERIES
-• [Surgery Name]
-  Date: [Date]
-  Hospital: [Hospital]
-  Surgeon: [Surgeon]
-
+{surgeries_str}
 ---
 MAJOR SURGERIES / ILLNESS
 • [Illness Name]
@@ -118,13 +219,26 @@ YEAR [YYYY]
 • [Day] – [Event Type]
   [Description]
 
-Now generate the complete summary:
+Now generate the complete summary filling in all available information from the provided medical data:
 """
         return prompt
     
     @staticmethod
-    def get_cardiology_summary_prompt(patient_data: dict, cardiac_data: dict) -> str:
+    def get_cardiology_summary_prompt(patient_data: Dict[str, Any], cardiac_data: Dict[str, Any]) -> str:
         """Generate prompt for cardiology-specific summary"""
+        
+        cardiac_diagnoses = PromptTemplates._safe_list(cardiac_data.get('cardiacDiagnoses', []))
+        cardiac_medications = PromptTemplates._safe_list(cardiac_data.get('cardiacMedications', []))
+        cardiac_tests = PromptTemplates._safe_list(cardiac_data.get('cardiacTests', []))
+        risk_factors = PromptTemplates._safe_list(cardiac_data.get('riskFactors', []))
+        
+        vitals = cardiac_data.get('vitals', {})
+        vitals_str = ""
+        if vitals:
+            for key, value in vitals.items():
+                vitals_str += f"• {key}: {value}\n"
+        else:
+            vitals_str = "• No vital signs recorded"
         
         prompt = f"""You are a cardiology specialist AI. Generate a focused cardiac patient summary in the exact format shown below.
 
@@ -135,55 +249,51 @@ PATIENT INFORMATION:
 - Blood Group: {patient_data.get('bloodGroup', 'Unknown')}
 
 CARDIAC DATA:
-Cardiac Diagnoses: {', '.join(cardiac_data.get('cardiacDiagnoses', ['None']))}
-Cardiac Medications: {', '.join(cardiac_data.get('cardiacMedications', ['None']))}
-Cardiac Tests: {', '.join(cardiac_data.get('cardiacTests', ['None']))}
-Vital Signs: {json.dumps(cardiac_data.get('vitals', {}))}
-Risk Factors: {', '.join(cardiac_data.get('riskFactors', ['None']))}
+Cardiac Diagnoses: {cardiac_diagnoses}
+Cardiac Medications: {cardiac_medications}
+Cardiac Tests: {cardiac_tests}
+Risk Factors: {risk_factors}
 
 Generate the summary in this EXACT format:
 
 CARDIOLOGY SUMMARY
 
 PATIENT INFORMATION
-Name: [Name]
-Patient ID: [ID]
-Age: [Age]
-Blood Group: [Blood Group]
+Name: {patient_data.get('name', 'Unknown')}
+Patient ID: {patient_data.get('patientId', 'Unknown')}
+Age: {patient_data.get('age', 'Unknown')}
+Blood Group: {patient_data.get('bloodGroup', 'Unknown')}
 
 CARDIAC CONDITIONS
-• [Condition 1]
-• [Condition 2]
+{PromptTemplates._format_bullet_list(cardiac_diagnoses)}
 
 CARDIAC MEDICATIONS
-• [Medication 1] – [Purpose]
-• [Medication 2] – [Purpose]
+{PromptTemplates._format_bullet_list(cardiac_medications)}
 
 VITAL SIGNS
-• Blood Pressure: [Value]
-• Heart Rate: [Value]
-• Temperature: [Value]
-• Weight: [Value]
-
+{vitals_str}
 CARDIAC TESTS
-• [Test 1]: [Result]
-• [Test 2]: [Result]
+{PromptTemplates._format_bullet_list(cardiac_tests)}
 
 RISK FACTORS
-• [Factor 1]
-• [Factor 2]
+{PromptTemplates._format_bullet_list(risk_factors)}
 
 RECENT CARDIAC REPORTS
 • [Report 1] – [Date]
 • [Report 2] – [Date]
 
-Now generate the complete summary:
+Now generate the complete summary using the provided cardiac data:
 """
         return prompt
     
     @staticmethod
-    def get_orthopedic_summary_prompt(patient_data: dict, orthopedic_data: dict) -> str:
+    def get_orthopedic_summary_prompt(patient_data: Dict[str, Any], orthopedic_data: Dict[str, Any]) -> str:
         """Generate prompt for orthopedic-specific summary"""
+        
+        orthopedic_diagnoses = PromptTemplates._safe_list(orthopedic_data.get('orthopedicDiagnoses', []))
+        orthopedic_medications = PromptTemplates._safe_list(orthopedic_data.get('orthopedicMedications', []))
+        imaging_results = PromptTemplates._safe_list(orthopedic_data.get('imagingResults', []))
+        mobility_status = orthopedic_data.get('mobilityStatus', 'Unknown')
         
         prompt = f"""You are an orthopedic specialist AI. Generate a focused musculoskeletal patient summary in the exact format shown below.
 
@@ -194,40 +304,37 @@ PATIENT INFORMATION:
 - Blood Group: {patient_data.get('bloodGroup', 'Unknown')}
 
 ORTHOPEDIC DATA:
-Orthopedic Diagnoses: {', '.join(orthopedic_data.get('orthopedicDiagnoses', ['None']))}
-Orthopedic Medications: {', '.join(orthopedic_data.get('orthopedicMedications', ['None']))}
-Imaging Results: {', '.join(orthopedic_data.get('imagingResults', ['None']))}
-Mobility Status: {orthopedic_data.get('mobilityStatus', 'Unknown')}
+Orthopedic Diagnoses: {orthopedic_diagnoses}
+Orthopedic Medications: {orthopedic_medications}
+Imaging Results: {imaging_results}
+Mobility Status: {mobility_status}
 
 Generate the summary in this EXACT format:
 
 ORTHOPEDIC SUMMARY
 
 PATIENT INFORMATION
-Name: [Name]
-Patient ID: [ID]
-Age: [Age]
-Blood Group: [Blood Group]
+Name: {patient_data.get('name', 'Unknown')}
+Patient ID: {patient_data.get('patientId', 'Unknown')}
+Age: {patient_data.get('age', 'Unknown')}
+Blood Group: {patient_data.get('bloodGroup', 'Unknown')}
 
 ORTHOPEDIC CONDITIONS
-• [Condition 1]
-• [Condition 2]
+{PromptTemplates._format_bullet_list(orthopedic_diagnoses)}
 
 PAIN/INFLAMMATION MEDICATIONS
-• [Medication 1]
-• [Medication 2]
+{PromptTemplates._format_bullet_list(orthopedic_medications)}
 
 IMAGING RESULTS
-• [Result 1]
-• [Result 2]
+{PromptTemplates._format_bullet_list(imaging_results)}
 
 MOBILITY STATUS
-[Status description]
+{mobility_status}
 
 RECENT ORTHOPEDIC REPORTS
 • [Report 1] – [Date]
 • [Report 2] – [Date]
 
-Now generate the complete summary:
+Now generate the complete summary using the provided orthopedic data:
 """
         return prompt

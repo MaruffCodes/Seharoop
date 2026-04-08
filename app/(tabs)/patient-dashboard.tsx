@@ -227,7 +227,7 @@ export default function PatientDashboard(): JSX.Element {
                   allDocuments.push({
                     id: doc._id || doc.filename,
                     name: doc.originalName,
-                    uri: `http://192.168.1.4:5001/uploads/${doc.filename}`,
+                    uri: `http://192.168.1.2:5001/uploads/${doc.filename}`,
                     type: doc.mimetype,
                     size: doc.size,
                     uploadDate: new Date(doc.uploadDate).toLocaleDateString(),
@@ -273,7 +273,7 @@ export default function PatientDashboard(): JSX.Element {
                 documentId: record.documents[0]?._id,
                 documentName: record.documents[0]?.originalName,
                 documentUri: record.documents[0]?.filename ?
-                  `http://192.168.1.4:5001/uploads/${record.documents[0].filename}` : undefined,
+                  `http://192.168.1.2:5001/uploads/${record.documents[0].filename}` : undefined,
                 data: record
               });
 
@@ -390,29 +390,41 @@ export default function PatientDashboard(): JSX.Element {
 
       if (uploadResponse.success) {
         // Update the temp document with the server response
-        setDocuments(prev => prev.map(doc =>
-          doc.id === tempDoc.id
-            ? {
-              ...doc,
-              id: uploadResponse.data?.fileId || doc.id,
-              status: 'processing',
-              uri: `http://192.168.1.4:5001/uploads/${uploadResponse.data?.fileId}.${file.name.split('.').pop()}`
-            }
-            : doc
-        ));
+        // After the upload is successful, add this inside the if(uploadResponse.success) block
+        if (uploadResponse.success) {
+          // Update the temp document with the server response
+          setDocuments(prev => prev.map(doc =>
+            doc.id === tempDoc.id
+              ? {
+                ...doc,
+                id: uploadResponse.data?.fileId || doc.id,
+                status: 'processing',
+                uri: `http://192.168.1.2:5001/uploads/${uploadResponse.data?.fileId}.${file.name.split('.').pop()}`
+              }
+              : doc
+          ));
 
-        Alert.alert(
-          'Processing Started',
-          'Your document is being processed. This may take a few moments.',
-          [{ text: 'OK' }]
-        );
+          Alert.alert(
+            'Processing Started',
+            'Your document is being processed. This may take a few moments.',
+            [{ text: 'OK' }]
+          );
 
-        // Refresh data
-        await loadPatientData();
-        await loadTimeline();
+          // Refresh data
+          await loadPatientData();
+          await loadTimeline();
 
-        // Refresh QR code with new data
-        await refreshQRCode();
+          // Refresh QR code with new data
+          await refreshQRCode();
+
+          // NEW: Refresh all summaries with new data
+          try {
+            await ApiService.refreshAllSummaries();
+            console.log('✅ Summaries refreshed after upload');
+          } catch (summaryError) {
+            console.log('⚠️ Could not refresh summaries:', summaryError);
+          }
+        }
       } else {
         // Remove temp document on failure
         setDocuments(prev => prev.filter(d => d.id !== tempDoc.id));
@@ -574,7 +586,7 @@ export default function PatientDashboard(): JSX.Element {
 
       // Try to construct server URL
       const fileExtension = document.name.split('.').pop();
-      const serverUrl = `http://192.168.1.4:5001/uploads/${document.id}.${fileExtension}`;
+      const serverUrl = `http://192.168.1.2:5001/uploads/${document.id}.${fileExtension}`;
 
       // Check if we can access the file
       try {
