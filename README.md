@@ -217,7 +217,7 @@ python test_model.py
 npm install
 
 # Update API URL in services/api.ts if needed
-# Default: http://192.168.1.2:5001/api
+# Default: http://192.168.1.8:5001/api
 ```
 
 ## 🎯 Running the Complete System

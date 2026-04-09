@@ -7,6 +7,7 @@ const ProcessedDocument = require('../models/ProcessedDocument');
 const PatientSummary = require('../models/PatientSummary');
 const QRCode = require('qrcode');
 const summaryGenerator = require('../services/summaryGenerator');
+const Notification = require('../models/Notification');
 
 // Helper function to optimize summary for QR code
 function optimizeSummaryForQR(summary, specialty) {
@@ -686,6 +687,37 @@ router.get('/slm-summary', auth, isPatient, async (req, res) => {
         timestamp: new Date().toISOString()
       }
     });
+  }
+});
+
+router.get('/notifications', auth, isPatient, async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json({ success: true, data: notifications });
+  } catch (error) {
+    console.error('Get notifications error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Mark notification as read
+router.put('/notifications/:id/read', auth, isPatient, async (req, res) => {
+  try {
+    const result = await Notification.updateOne(
+      { _id: req.params.id, userId: req.user._id },
+      { $set: { read: true } }
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, message: 'Notification not found' });
+    }
+    res.json({ success: true, message: 'Notification marked as read' });
+  } catch (error) {
+    console.error('Mark notification read error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

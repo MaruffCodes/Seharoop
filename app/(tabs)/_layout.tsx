@@ -44,7 +44,7 @@ export default function TabLayout() {
     },
     tabBarLabelStyle: {
       fontSize: 12,
-      fontWeight: '500',
+      fontWeight: '500' as const,
     },
   };
 
@@ -67,8 +67,8 @@ export default function TabLayout() {
         <Tabs.Screen name="patient-profile" options={{ href: null }} />
         <Tabs.Screen name="doctor-dashboard" options={{ href: null }} />
         <Tabs.Screen name="patient-search" options={{ href: null }} />
-        <Tabs.Screen name="Scanner" options={{ href: null }} />
         <Tabs.Screen name="patient-summary" options={{ href: null }} />
+        <Tabs.Screen name="Scanner" options={{ href: null }} />
       </Tabs>
     );
   }
@@ -125,18 +125,12 @@ export default function TabLayout() {
             tabBarIcon: ({ size, color }) => <Search size={size} color={color} />,
           }}
         />
-        <Tabs.Screen
-          name="Scanner"
-          options={{
-            title: 'Scan QR',
-            tabBarIcon: ({ size, color }) => <Scan size={size} color={color} />,
-          }}
-        />
         <Tabs.Screen name="patient-dashboard" options={{ href: null }} />
         <Tabs.Screen name="patient-medicalForm" options={{ href: null }} />
         <Tabs.Screen name="FullScreenQR" options={{ href: null }} />
         <Tabs.Screen name="patient-profile" options={{ href: null }} />
         <Tabs.Screen name="patient-summary" options={{ href: null }} />
+        <Tabs.Screen name="Scanner" options={{ href: null }} />
       </Tabs>
     );
   }

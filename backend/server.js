@@ -59,6 +59,7 @@ app.use('/api/doctor', doctorRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/processing', processingRoutes);
 
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({

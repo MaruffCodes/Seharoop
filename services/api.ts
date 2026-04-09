@@ -1,7 +1,9 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from 'expo-router';
 
-const API_BASE_URL = "http://192.168.1.2:5001/api";
+// DO NOT hardcode IPs in production. Use environment variables.
+export const BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || "http://192.168.1.8:5001";
+const API_BASE_URL = `${BASE_URL}/api`;
 
 interface ApiResponse<T = any> {
   success: boolean;
@@ -41,6 +43,11 @@ class ApiService {
       this.token = await AsyncStorage.getItem("seharoop_token");
     }
     return this.token;
+  }
+
+  // Instantly injects token post-login to avoid AsyncStorage race conditions
+  public setToken(token: string): void {
+    this.token = token;
   }
 
   public async request<T = any>(
@@ -285,10 +292,15 @@ class ApiService {
     });
   }
 
-  public async refreshSummaries(): Promise<ApiResponse> {
-    return this.request<ApiResponse>("/patient/refresh-summaries", {
-      method: "POST",
-      timeout: 30000,
+  // ==================== NOTIFICATION METHODS ====================
+  public async getPatientNotifications(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/patient/notifications", { timeout: 10000 });
+  }
+
+  public async markNotificationRead(notificationId: string): Promise<ApiResponse> {
+    return this.request<ApiResponse>(`/patient/notifications/${notificationId}/read`, {
+      method: "PUT",
+      timeout: 10000,
     });
   }
 
@@ -343,6 +355,19 @@ class ApiService {
 
   public async getMyPatients(): Promise<ApiResponse> {
     return this.request<ApiResponse>("/doctor/patients", { timeout: 10000 });
+  }
+
+  // Missing Doctor Dashboard Endpoints
+  public async getDoctorDashboardStats(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/doctor/dashboard/stats", { timeout: 10000 });
+  }
+
+  public async getDoctorSchedule(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/doctor/dashboard/schedule", { timeout: 10000 });
+  }
+
+  public async getDoctorActivity(): Promise<ApiResponse> {
+    return this.request<ApiResponse>("/doctor/dashboard/activity", { timeout: 10000 });
   }
 
   // Doctor SLM methods

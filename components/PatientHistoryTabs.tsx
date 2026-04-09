@@ -33,6 +33,12 @@ interface PatientHistoryTabsProps {
     pastSurgeries: Array<{surgery: string; date: Date; hospital: string; surgeon: string}>;
   };
 }
+
+interface FileUploadData {
+  uri: string;
+  type: string;
+  name: string;
+}
 interface TimelineRecord {
   date: string;
   description: string;
@@ -77,10 +83,14 @@ export default function PatientHistoryTabs({ patientData }: PatientHistoryTabsPr
     }
   };
 
-  const handleFileUpload = async (file : any) => {
+  const handleFileUpload = async (file: FileUploadData) => {
     try {
       setLoading(true);
       const uploadResponse = await ApiService.uploadFile(file, false);
+      
+      if (!uploadResponse || !uploadResponse.success) {
+        throw new Error(uploadResponse?.message || 'Server rejected the file upload');
+      }
       
       // Add record to patient's timeline
       const recordResponse = await ApiService.request(`/doctor/patient/${patientData.patientId}/record`, {
@@ -88,7 +98,7 @@ export default function PatientHistoryTabs({ patientData }: PatientHistoryTabsPr
         body: JSON.stringify({
           date: new Date().toISOString(),
           description: `Uploaded ${file.name}`,
-          type: file.type.startsWith('image/') ? 'imaging' : 'lab',
+          type: file.type && file.type.startsWith('image/') ? 'imaging' : 'lab',
           documents: [uploadResponse.data]
         }),
       });
@@ -116,7 +126,7 @@ export default function PatientHistoryTabs({ patientData }: PatientHistoryTabsPr
         const document = result.assets[0];
         await handleFileUpload({
           uri: document.uri,
-          type: document.mimeType,
+          type: document.mimeType || 'application/octet-stream',
           name: document.name,
         });
       }
@@ -188,7 +198,7 @@ export default function PatientHistoryTabs({ patientData }: PatientHistoryTabsPr
         <Text style={styles.summaryTitle}>Past Surgeries</Text>
         {patientData.pastSurgeries && patientData.pastSurgeries.length > 0 ? (
           patientData.pastSurgeries.map((surgery, index) => (
-            <View key={index} style={styles.surgeryItem}>
+            <View key={`surgery-${surgery.surgery}-${index}`} style={styles.surgeryItem}>
               <Text style={styles.surgeryText}>{surgery.surgery}</Text>
               <Text style={styles.surgeryDetails}>
                 {surgery.date ? new Date(surgery.date).toLocaleDateString() : ''} • {surgery.hospital}
@@ -221,14 +231,14 @@ export default function PatientHistoryTabs({ patientData }: PatientHistoryTabsPr
               </Text>
             </View>
           ) : (
-            timelineData.map((yearData, yearIndex) => (
-              <View key={yearIndex} style={styles.yearSection}>
+            timelineData.map((yearData) => (
+              <View key={`year-${yearData.year}`} style={styles.yearSection}>
                 <Text style={styles.yearTitle}>{yearData.year}</Text>
-                {yearData.months.map((monthData, monthIndex) => (
-                  <View key={monthIndex} style={styles.monthSection}>
+                {yearData.months.map((monthData) => (
+                  <View key={`month-${yearData.year}-${monthData.month}`} style={styles.monthSection}>
                     <Text style={styles.monthTitle}>{monthData.month}</Text>
                     {monthData.records.map((record, recordIndex) => (
-                      <View key={recordIndex} style={styles.timelineItem}>
+                      <View key={`record-${yearData.year}-${monthData.month}-${recordIndex}`} style={styles.timelineItem}>
                         <View style={styles.timelineDot} />
                         <View style={styles.timelineContent}>
                           <Text style={styles.recordDate}>
