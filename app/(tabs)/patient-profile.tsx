@@ -896,9 +896,9 @@ export default function PatientProfile(): JSX.Element {
           </View>
           <View style={s.privBody}>
             <Text style={s.privTitle}>Your data is secure</Text>
-            <Text style={s.privDesc}>
-              All medical records are encrypted and only accessible to authorized healthcare providers.
-            </Text>
+            {/* <Text style={s.privDesc}> */}
+            {/* All medical records are encrypted and only accessible to authorized healthcare providers. */}
+            {/* </Text> */}
           </View>
         </View>
 

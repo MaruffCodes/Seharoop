@@ -888,7 +888,7 @@ export default function PatientDashboard(): JSX.Element {
                 <View style={s.idBadge}>
                   <Text style={s.idText}>ID: {userData?.patientId || '—'}</Text>
                   {userData?.bloodGroup && <View style={s.bloodDot} />}
-                  {userData?.bloodGroup && <Text style={s.bloodText}>{userData.bloodGroup}</Text>}
+                  {userData?.bloodGroup && <Text style={s.bloodText}>{userData.bloodGroup}ve</Text>}
                 </View>
               </View>
             </View>
@@ -1020,7 +1020,7 @@ export default function PatientDashboard(): JSX.Element {
                         <Text style={s.processedTxt}>✓ Processed</Text>
                       </View>
                     )}
-                    {doc.status === 'processing' && (
+                    {doc.status === 'processed' && (
                       <View style={[s.processedTag, { backgroundColor: C.warningLight }]}>
                         <Text style={[s.processedTxt, { color: C.warning }]}>⏳ Processing</Text>
                       </View>

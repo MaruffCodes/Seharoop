@@ -792,7 +792,8 @@ export default function PatientSummary() {
                                                 <Text style={styles.recordDate}>
                                                     • {record.day} {monthData.month} – {record.type}
                                                 </Text>
-                                                <Text style={styles.recordDescription}>  {record.description}</Text>
+                                                {/* <Text style={styles.recordDescription}>  {record.description}</Text>*/}
+                                                <Text style={styles.recordDescription}>  {'Yet to implement'}</Text>
                                             </View>
                                         ))}
                                     </View>
