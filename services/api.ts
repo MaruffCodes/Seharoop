@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from 'expo-router';
 
 // DO NOT hardcode IPs in production. Use environment variables.
-export const BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || "http://192.168.1.8:5001";
+export const BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || "http://192.168.1.5:5001";
 const API_BASE_URL = `${BASE_URL}/api`;
 
 interface ApiResponse<T = any> {

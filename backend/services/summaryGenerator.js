@@ -1,17 +1,17 @@
 /**
- * Medical Summary Generator
- * Generates different types of summaries based on specialty with aggressive deduplication.
+ * Medical Summary Generator — SEHAROOP
  *
- * CHANGES vs original:
- *  1. generateGeneralSummary now reads structured sub-fields from ProcessedDocument
- *     that the new MedicalEntityExtractor emits (allergies, medications, pastSurgeries,
- *     majorIllnesses, interventions, bloodThinner, emergencyContact, demographics).
- *  2. parseExtractedTextWithDeduplication has a hard section-reset list so it can
- *     never bleed content between sections. (kept as a fallback for legacy docs)
- *  3. Medications are never sourced from the allergies array.
- *  4. emergencyContact is read from doc.emergencyContact when the medicalForm field
- *     is absent.
- *  5. Medical history now merges doc-level parsed history records too.
+ * Key behaviours:
+ *  1. generateGeneralSummary reads structured sub-fields from ProcessedDocument
+ *     emitted by the new MedicalEntityExtractor.
+ *  2. LOCKED FIELDS (patientDemographics, address, medicalProfile) are always
+ *     sourced from PatientMedicalForm / User — never overwritten by doc extraction.
+ *  3. Appendable fields (allergies, medications, surgeries, …) are MERGED across
+ *     all uploaded documents using Maps for deduplication.
+ *  4. Placeholders ([{ name: 'NA' }]) are only emitted when the field is truly
+ *     empty — they are never shown alongside real data.
+ *  5. parseExtractedTextWithDeduplication is kept as a safe fallback for legacy
+ *     documents; medications are never populated from it.
  */
 
 const PatientSummary = require('../models/PatientSummary');
@@ -19,7 +19,6 @@ const User = require('../models/User');
 const PatientMedicalForm = require('../models/PatientMedicalForm');
 const ProcessedDocument = require('../models/ProcessedDocument');
 
-// All known section headers — used to hard-reset the parser
 const ALL_SECTION_HEADERS = new Set([
     'PATIENT DEMOGRAPHICS', 'ADDRESS', 'MEDICAL PROFILE',
     'ALLERGIES', 'COMORBID CONDITIONS', 'CHRONIC DISEASES',
@@ -44,6 +43,18 @@ class SummaryGenerator {
 
             let patientSummary = await PatientSummary.findOne({ patientId: patient._id });
             if (!patientSummary) patientSummary = new PatientSummary({ patientId: patient._id });
+
+            // ── LOCKED FIELD PROTECTION ────────────────────────────────────────
+            // If a summary already existed, re-apply locked fields from the
+            // stored version (which came from the medical form or profile).
+            if (patientSummary.generalSummary) {
+                const existing = patientSummary.generalSummary;
+                for (const field of ['patientDemographics', 'address', 'medicalProfile']) {
+                    if (existing[field] !== undefined && existing[field] !== null) {
+                        generalSummary[field] = existing[field];
+                    }
+                }
+            }
 
             patientSummary.generalSummary = generalSummary;
             patientSummary.cardiologySummary = cardiologySummary;
@@ -100,7 +111,7 @@ class SummaryGenerator {
     generateGeneralSummary(patient, medicalForm, documents) {
         console.log(`📊 Generating general summary — ${documents.length} docs`);
 
-        // ── Demographics from medicalForm ─────────────────────────────────────
+        // ── LOCKED: Demographics (always from medicalForm / User) ─────────────
         const dob = medicalForm?.personalInfo?.dateOfBirth
             ? new Date(medicalForm.personalInfo.dateOfBirth) : null;
         const age = dob ? new Date().getFullYear() - dob.getFullYear() : null;
@@ -109,19 +120,21 @@ class SummaryGenerator {
             : 'NA';
 
         const address = medicalForm?.personalInfo?.address || {};
-        const formattedAddress = [address.street, address.city, address.state,
-        address.pincode ? `- ${address.pincode}` : null, address.country]
-            .filter(Boolean).join(', ') || 'NA';
+        const formattedAddress = [
+            address.street, address.city, address.state,
+            address.pincode ? `- ${address.pincode}` : null,
+            address.country
+        ].filter(Boolean).join(', ') || 'NA';
 
-        // ── Dedup collections ─────────────────────────────────────────────────
-        const allergiesMap = new Map();
-        const medicationsMap = new Map();
-        const comorbidMap = new Map();
-        const chronicMap = new Map();
-        const pastSurgeriesMap = new Map();
-        const majorIllnessesMap = new Map();
-        const previousInterventionsMap = new Map();
-        const bloodThinnerMap = new Map();
+        // ── APPENDABLE: Dedup collections ─────────────────────────────────────
+        const allergiesMap = new Map(); // key → name string
+        const medicationsMap = new Map(); // key → { name, purpose, dosage }
+        const comorbidMap = new Map(); // key → name string
+        const chronicMap = new Map(); // key → name string
+        const pastSurgeriesMap = new Map(); // key → surgery object
+        const majorIllnessesMap = new Map(); // key → illness object
+        const previousInterventionsMap = new Map(); // key → intervention object
+        const bloodThinnerMap = new Map(); // key → bt object
         const hospitalsSet = new Set();
         const doctorsSet = new Set();
         const medicalHistoryMap = new Map();
@@ -130,7 +143,7 @@ class SummaryGenerator {
         documents.forEach(doc => {
             console.log(`📄 Processing document: ${doc.fileName}`);
 
-            // ── ALLERGIES — read ONLY from doc.allergies (section-isolated by extractor)
+            // ALLERGIES — only from doc.allergies (section-isolated)
             if (Array.isArray(doc.allergies)) {
                 doc.allergies.forEach(a => {
                     const name = typeof a === 'string' ? a : a?.name;
@@ -140,7 +153,7 @@ class SummaryGenerator {
                 });
             }
 
-            // ── MEDICATIONS — read ONLY from doc.medications (already structured)
+            // MEDICATIONS — only from doc.medications
             if (Array.isArray(doc.medications)) {
                 doc.medications.forEach(m => {
                     const name = typeof m === 'object' ? m?.name : m;
@@ -148,7 +161,7 @@ class SummaryGenerator {
                         const key = name.toLowerCase().trim();
                         if (!medicationsMap.has(key)) {
                             medicationsMap.set(key, {
-                                name: name,
+                                name,
                                 purpose: m?.purpose || 'NA',
                                 dosage: m?.dosage || 'NA'
                             });
@@ -157,7 +170,7 @@ class SummaryGenerator {
                 });
             }
 
-            // ── PAST SURGERIES from doc (new extractor populates doc.pastSurgeries)
+            // PAST SURGERIES
             if (Array.isArray(doc.pastSurgeries)) {
                 doc.pastSurgeries.forEach(s => {
                     if (s?.name && s.name !== 'NA') {
@@ -169,12 +182,18 @@ class SummaryGenerator {
                                 hospital: s.hospital || 'NA',
                                 surgeon: s.surgeon || 'NA'
                             });
+                        } else {
+                            // Append missing sub-fields if a later doc fills them in
+                            const existing = pastSurgeriesMap.get(key);
+                            if (existing.date === 'NA' && s.date && s.date !== 'NA') existing.date = s.date;
+                            if (existing.hospital === 'NA' && s.hospital && s.hospital !== 'NA') existing.hospital = s.hospital;
+                            if (existing.surgeon === 'NA' && s.surgeon && s.surgeon !== 'NA') existing.surgeon = s.surgeon;
                         }
                     }
                 });
             }
 
-            // ── MAJOR ILLNESSES from doc
+            // MAJOR ILLNESSES
             if (Array.isArray(doc.majorIllnesses)) {
                 doc.majorIllnesses.forEach(ill => {
                     if (ill?.name && ill.name !== 'NA') {
@@ -186,12 +205,17 @@ class SummaryGenerator {
                                 hospital: ill.hospital || 'NA',
                                 notes: ill.notes || 'NA'
                             });
+                        } else {
+                            const existing = majorIllnessesMap.get(key);
+                            if (existing.date === 'NA' && ill.date && ill.date !== 'NA') existing.date = ill.date;
+                            if (existing.hospital === 'NA' && ill.hospital && ill.hospital !== 'NA') existing.hospital = ill.hospital;
+                            if (existing.notes === 'NA' && ill.notes && ill.notes !== 'NA') existing.notes = ill.notes;
                         }
                     }
                 });
             }
 
-            // ── INTERVENTIONS from doc
+            // INTERVENTIONS
             if (Array.isArray(doc.interventions)) {
                 doc.interventions.forEach(iv => {
                     if (iv?.name && iv.name !== 'NA') {
@@ -202,12 +226,16 @@ class SummaryGenerator {
                                 date: iv.date || 'NA',
                                 hospital: iv.hospital || 'NA'
                             });
+                        } else {
+                            const existing = previousInterventionsMap.get(key);
+                            if (existing.date === 'NA' && iv.date && iv.date !== 'NA') existing.date = iv.date;
+                            if (existing.hospital === 'NA' && iv.hospital && iv.hospital !== 'NA') existing.hospital = iv.hospital;
                         }
                     }
                 });
             }
 
-            // ── BLOOD THINNER from doc
+            // BLOOD THINNER
             if (Array.isArray(doc.bloodThinner)) {
                 doc.bloodThinner.forEach(bt => {
                     if (bt?.name && bt.name !== 'NA') {
@@ -224,18 +252,7 @@ class SummaryGenerator {
                 });
             }
 
-            // ── DIAGNOSES → comorbid / chronic buckets
-            if (Array.isArray(doc.diagnoses)) {
-                doc.diagnoses.forEach(d => {
-                    if (d && d !== 'NA' && typeof d === 'string') {
-                        const key = d.toLowerCase().trim();
-                        if (this.isChronicDisease(d)) chronicMap.set(key, d);
-                        if (this.isComorbidCondition(d)) comorbidMap.set(key, d);
-                    }
-                });
-            }
-
-            // ── Also populate comorbid / chronic from dedicated doc fields
+            // COMORBID / CHRONIC from dedicated doc fields
             if (Array.isArray(doc.comorbidConditions)) {
                 doc.comorbidConditions.forEach(c => {
                     const name = typeof c === 'string' ? c : c?.name;
@@ -249,21 +266,30 @@ class SummaryGenerator {
                 });
             }
 
-            // ── HOSPITALS & DOCTORS
-            if (Array.isArray(doc.hospitals)) doc.hospitals.forEach(h => h && h !== 'NA' && hospitalsSet.add(h));
-            if (Array.isArray(doc.doctors)) doc.doctors.forEach(d => d && d !== 'NA' && doctorsSet.add(d));
-
-            // ── PARSED MEDICAL HISTORY RECORDS from extractor
-            if (Array.isArray(doc.parsedMedicalHistory)) {
-                doc.parsedMedicalHistory.forEach(record => {
-                    const key = `${record.year}-${record.month}-${record.day}-${record.type}`;
-                    if (!medicalHistoryMap.has(key)) {
-                        medicalHistoryMap.set(key, record);
+            // DIAGNOSES → comorbid / chronic buckets
+            if (Array.isArray(doc.diagnoses)) {
+                doc.diagnoses.forEach(d => {
+                    if (d && d !== 'NA' && typeof d === 'string') {
+                        const key = d.toLowerCase().trim();
+                        if (this.isChronicDisease(d)) chronicMap.set(key, d);
+                        if (this.isComorbidCondition(d)) comorbidMap.set(key, d);
                     }
                 });
             }
 
-            // ── Fallback: use processedAt as a history entry
+            // HOSPITALS & DOCTORS
+            if (Array.isArray(doc.hospitals)) doc.hospitals.forEach(h => h && h !== 'NA' && hospitalsSet.add(h));
+            if (Array.isArray(doc.doctors)) doc.doctors.forEach(d => d && d !== 'NA' && doctorsSet.add(d));
+
+            // PARSED MEDICAL HISTORY
+            if (Array.isArray(doc.parsedMedicalHistory)) {
+                doc.parsedMedicalHistory.forEach(record => {
+                    const key = `${record.year}-${record.month}-${record.day}-${record.type}`;
+                    if (!medicalHistoryMap.has(key)) medicalHistoryMap.set(key, record);
+                });
+            }
+
+            // Fallback history entry from processedAt
             if (doc.processedAt) {
                 const date = new Date(doc.processedAt);
                 const year = date.getFullYear();
@@ -280,17 +306,16 @@ class SummaryGenerator {
                 }
             }
 
-            // ── Legacy fallback: parse extractedText (section-safe)
+            // Legacy fallback: parse extractedText (section-safe, no medications)
             if (doc.extractedText && typeof doc.extractedText === 'string') {
                 this.parseExtractedTextWithDeduplication(doc.extractedText, {
                     pastSurgeriesMap, majorIllnessesMap, previousInterventionsMap,
                     bloodThinnerMap, allergiesMap, hospitalsSet, doctorsSet
-                    // NOTE: medicationsMap intentionally NOT passed — prevents cross-section bleed
                 });
             }
         });
 
-        // ── medicalForm overrides / supplements ───────────────────────────────
+        // ── medicalForm supplements (never overwrite, only fill gaps) ─────────
         if (medicalForm) {
             medicalForm.surgicalHistory?.pastSurgeries?.forEach(s => {
                 if (s.surgery && s.surgery !== 'NA') {
@@ -346,9 +371,34 @@ class SummaryGenerator {
                     }
                 }
             });
+
+            // Also supplement comorbid / chronic from medical form
+            medicalForm.medicalConditions?.comorbidConditions?.forEach(c => {
+                if (c && c !== 'NA') comorbidMap.set(c.toLowerCase().trim(), c);
+            });
+            medicalForm.medicalConditions?.chronicDiseases?.forEach(c => {
+                if (c && c !== 'NA') chronicMap.set(c.toLowerCase().trim(), c);
+            });
         }
 
-        // ── Build year→month history structure ────────────────────────────────
+        // ── Emergency contact ─────────────────────────────────────────────────
+        let emergencyContact = { name: 'NA', relationship: 'NA', phone: 'NA' };
+        if (medicalForm?.emergencyContact?.name && medicalForm.emergencyContact.name !== 'NA') {
+            emergencyContact = {
+                name: medicalForm.emergencyContact.name || 'NA',
+                relationship: medicalForm.emergencyContact.relationship || 'NA',
+                phone: medicalForm.emergencyContact.phone || 'NA'
+            };
+        } else {
+            for (const doc of documents) {
+                if (doc.emergencyContact?.name && doc.emergencyContact.name !== 'NA') {
+                    emergencyContact = doc.emergencyContact;
+                    break;
+                }
+            }
+        }
+
+        // ── Build year→month history ──────────────────────────────────────────
         const medicalHistoryByYear = {};
         medicalHistoryMap.forEach(record => {
             if (!medicalHistoryByYear[record.year]) medicalHistoryByYear[record.year] = {};
@@ -360,27 +410,25 @@ class SummaryGenerator {
             });
         });
 
-        // ── Emergency contact: prefer medicalForm, fall back to doc-level ─────
-        let emergencyContact = { name: 'NA', relationship: 'NA', phone: 'NA' };
-        if (medicalForm?.emergencyContact?.name) {
-            emergencyContact = {
-                name: medicalForm.emergencyContact.name || 'NA',
-                relationship: medicalForm.emergencyContact.relationship || 'NA',
-                phone: medicalForm.emergencyContact.phone || 'NA'
-            };
-        } else {
-            // Check processed docs for emergency contact extracted by new extractor
-            for (const doc of documents) {
-                if (doc.emergencyContact?.name && doc.emergencyContact.name !== 'NA') {
-                    emergencyContact = doc.emergencyContact;
-                    break;
-                }
-            }
-        }
+        // ── Helper: convert map to array, or placeholder if empty ────────────
+        const mapToArray = (map) => map.size > 0 ? Array.from(map.values()) : null;
+        const setToArray = (set) => set.size > 0 ? Array.from(set) : null;
+        const naOrArray = (arr, naObj) => arr && arr.length > 0 ? arr : [naObj];
 
-        // ── Assemble final summary ────────────────────────────────────────────
+        const allergiesArr = mapToArray(allergiesMap)?.map(n => ({ name: n }));
+        const medicationsArr = mapToArray(medicationsMap);
+        const comorbidArr = mapToArray(comorbidMap)?.map(n => ({ name: n }));
+        const chronicArr = mapToArray(chronicMap)?.map(n => ({ name: n }));
+        const surgeriesArr = mapToArray(pastSurgeriesMap);
+        const illnessesArr = mapToArray(majorIllnessesMap);
+        const interventionsArr = mapToArray(previousInterventionsMap);
+        const btArr = mapToArray(bloodThinnerMap);
+        const hospitalsArr = setToArray(hospitalsSet);
+        const doctorsArr = setToArray(doctorsSet);
+
+        // ── LOCKED: demographics from medicalForm / User ──────────────────────
         const summary = {
-            patientDemographics: {
+            patientDemographics: {   // ← LOCKED FIELD
                 name: patient.name || 'NA',
                 patientId: patient.patientId || 'NA',
                 dateOfBirth: formattedDob,
@@ -389,41 +437,27 @@ class SummaryGenerator {
                 email: patient.email || 'NA',
                 phone: medicalForm?.personalInfo?.phone || patient.phone || 'NA'
             },
-            address: formattedAddress,
-            medicalProfile: {
+            address: formattedAddress,    // ← LOCKED FIELD
+            medicalProfile: {             // ← LOCKED FIELD
                 bloodGroup: patient.bloodGroup || medicalForm?.personalInfo?.bloodGroup || 'NA',
                 isDiabetic: medicalForm?.medicalConditions?.isDiabetic ? 'Yes' : 'No',
                 diabetesType: medicalForm?.medicalConditions?.diabetesType || 'NA',
                 hasThyroid: medicalForm?.medicalConditions?.hasThyroid ? 'Yes' : 'No',
                 thyroidCondition: medicalForm?.medicalConditions?.thyroidCondition || 'NA'
             },
-            allergies: allergiesMap.size > 0
-                ? Array.from(allergiesMap.values()).map(a => ({ name: a }))
-                : [{ name: 'NA' }],
-            comorbidConditions: comorbidMap.size > 0
-                ? Array.from(comorbidMap.values()).map(c => ({ name: c }))
-                : [{ name: 'NA' }],
-            chronicDiseases: chronicMap.size > 0
-                ? Array.from(chronicMap.values()).map(d => ({ name: d }))
-                : [{ name: 'NA' }],
-            currentMedications: medicationsMap.size > 0
-                ? Array.from(medicationsMap.values())
-                : [{ name: 'NA', purpose: 'NA', dosage: 'NA' }],
-            pastSurgeries: pastSurgeriesMap.size > 0
-                ? Array.from(pastSurgeriesMap.values())
-                : [{ name: 'NA', date: 'NA', hospital: 'NA', surgeon: 'NA' }],
-            majorSurgeriesOrIllness: majorIllnessesMap.size > 0
-                ? Array.from(majorIllnessesMap.values())
-                : [{ name: 'NA', date: 'NA', hospital: 'NA', notes: 'NA' }],
-            previousInterventions: previousInterventionsMap.size > 0
-                ? Array.from(previousInterventionsMap.values())
-                : [{ name: 'NA', date: 'NA', hospital: 'NA' }],
-            bloodThinnerHistory: bloodThinnerMap.size > 0
-                ? Array.from(bloodThinnerMap.values())
-                : [{ name: 'NA', type: 'NA', duration: 'NA', reason: 'NA' }],
+
+            // ── APPENDABLE fields ─────────────────────────────────────────────
+            allergies: naOrArray(allergiesArr, { name: 'NA' }),
+            comorbidConditions: naOrArray(comorbidArr, { name: 'NA' }),
+            chronicDiseases: naOrArray(chronicArr, { name: 'NA' }),
+            currentMedications: naOrArray(medicationsArr, { name: 'NA', purpose: 'NA', dosage: 'NA' }),
+            pastSurgeries: naOrArray(surgeriesArr, { name: 'NA', date: 'NA', hospital: 'NA', surgeon: 'NA' }),
+            majorSurgeriesOrIllness: naOrArray(illnessesArr, { name: 'NA', date: 'NA', hospital: 'NA', notes: 'NA' }),
+            previousInterventions: naOrArray(interventionsArr, { name: 'NA', date: 'NA', hospital: 'NA' }),
+            bloodThinnerHistory: naOrArray(btArr, { name: 'NA', type: 'NA', duration: 'NA', reason: 'NA' }),
             emergencyContact,
-            hospitals: Array.from(hospitalsSet),
-            doctors: Array.from(doctorsSet),
+            hospitals: hospitalsArr || [],
+            doctors: doctorsArr || [],
             medicalHistory: this.formatMedicalHistory(medicalHistoryByYear),
             lastUpdated: new Date().toISOString()
         };
@@ -444,14 +478,6 @@ class SummaryGenerator {
     // LEGACY EXTRACTED-TEXT PARSER (section-safe fallback)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Parse raw extractedText for legacy documents that don't yet have
-     * structured sub-fields from the new extractor.
-     *
-     * KEY FIX: every known section header resets `currentSection`, preventing
-     * content from bleeding into the wrong array.
-     * medications are NOT populated here to avoid cross-section contamination.
-     */
     parseExtractedTextWithDeduplication(text, collections) {
         const {
             pastSurgeriesMap, majorIllnessesMap, previousInterventionsMap,
@@ -467,52 +493,44 @@ class SummaryGenerator {
             const lineUp = line.toUpperCase();
             if (!line) continue;
 
-            // ── Hard reset on ANY known section header ────────────────────────
             if (ALL_SECTION_HEADERS.has(lineUp)) {
-                // Flush pending item before switching
                 currentItem = null;
-
                 if (lineUp === 'PAST SURGERIES') currentSection = 'surgeries';
                 else if (lineUp.startsWith('MAJOR SURGERIES')) currentSection = 'major';
                 else if (lineUp === 'PREVIOUS INTERVENTIONS') currentSection = 'interventions';
                 else if (lineUp === 'BLOOD THINNER HISTORY') currentSection = 'bloodThinner';
                 else if (lineUp === 'ALLERGIES') currentSection = 'allergies';
-                else currentSection = null; // stop collecting
+                else currentSection = null;
                 continue;
             }
 
             if (!currentSection) continue;
 
-            // ── Bullet item → start a new entry ──────────────────────────────
-            if (/^[•*\-–]/.test(line)) {
-                const rawName = line.replace(/^[•*\-–]\s*/, '');
+            if (/^[•*\-–¢+►→▪✓❯›]/.test(line)) {
+                const rawName = line.replace(/^[•*\-–¢+►→▪✓❯›]\s*/, '');
 
                 if (currentSection === 'surgeries') {
                     const key = rawName.toLowerCase().trim();
                     if (!pastSurgeriesMap.has(key)) {
                         currentItem = { name: rawName, date: 'NA', hospital: 'NA', surgeon: 'NA' };
                         pastSurgeriesMap.set(key, currentItem);
-                    } else {
-                        currentItem = pastSurgeriesMap.get(key);
-                    }
+                    } else { currentItem = pastSurgeriesMap.get(key); }
+
                 } else if (currentSection === 'major') {
                     const key = rawName.toLowerCase().trim();
                     if (!majorIllnessesMap.has(key)) {
                         currentItem = { name: rawName, date: 'NA', hospital: 'NA', notes: 'NA' };
                         majorIllnessesMap.set(key, currentItem);
-                    } else {
-                        currentItem = majorIllnessesMap.get(key);
-                    }
+                    } else { currentItem = majorIllnessesMap.get(key); }
+
                 } else if (currentSection === 'interventions') {
                     const key = rawName.toLowerCase().trim();
                     if (!previousInterventionsMap.has(key)) {
                         currentItem = { name: rawName, date: 'NA', hospital: 'NA' };
                         previousInterventionsMap.set(key, currentItem);
-                    } else {
-                        currentItem = previousInterventionsMap.get(key);
-                    }
+                    } else { currentItem = previousInterventionsMap.get(key); }
+
                 } else if (currentSection === 'bloodThinner') {
-                    // Parse "Aspirin (Antiplatelet)" → name + type
                     const m = rawName.match(/^(.+?)\s*\(([^)]+)\)$/);
                     const name = m ? m[1].trim() : rawName;
                     const type = m ? m[2].trim() : 'NA';
@@ -520,16 +538,14 @@ class SummaryGenerator {
                     if (!bloodThinnerMap.has(key)) {
                         currentItem = { name, type, duration: 'NA', reason: 'NA' };
                         bloodThinnerMap.set(key, currentItem);
-                    } else {
-                        currentItem = bloodThinnerMap.get(key);
-                    }
+                    } else { currentItem = bloodThinnerMap.get(key); }
+
                 } else if (currentSection === 'allergies') {
                     const key = rawName.toLowerCase().trim();
                     if (!allergiesMap.has(key)) allergiesMap.set(key, rawName);
-                    currentItem = null; // allergies have no sub-fields
+                    currentItem = null;
                 }
 
-                // ── Sub-field lines (Date:, Hospital:, etc.) ──────────────────────
             } else if (currentItem) {
                 const subFieldMap = {
                     'date:': 'date',
@@ -544,7 +560,6 @@ class SummaryGenerator {
                 for (const [prefix, field] of Object.entries(subFieldMap)) {
                     if (lowerLine.startsWith(prefix)) {
                         currentItem[field] = line.slice(prefix.length).trim();
-                        // Also collect hospitals/doctors from sub-fields
                         if (field === 'hospital') hospitalsSet.add(currentItem[field]);
                         if (field === 'surgeon') doctorsSet.add(currentItem[field]);
                         break;
@@ -560,11 +575,11 @@ class SummaryGenerator {
 
     formatMedicalHistory(historyByYear) {
         const formatted = [];
-        const years = Object.keys(historyByYear).sort((a, b) => parseInt(b) - parseInt(a));
         const monthOrder = {
             January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
             July: 7, August: 8, September: 9, October: 10, November: 11, December: 12
         };
+        const years = Object.keys(historyByYear).sort((a, b) => parseInt(b) - parseInt(a));
         for (const year of years) {
             const yearData = { year, months: [] };
             const months = Object.keys(historyByYear[year])
@@ -586,7 +601,8 @@ class SummaryGenerator {
         const keywords = [
             'diabetes', 'hypertension', 'asthma', 'copd', 'arthritis',
             'heart disease', 'ckd', 'kidney disease', 'liver disease',
-            'thyroid', 'osteoporosis', 'alzheimer', 'parkinson'
+            'thyroid', 'osteoporosis', 'alzheimer', 'parkinson',
+            'high cholesterol', 'hyperlipidemia'
         ];
         const lower = diagnosis.toLowerCase();
         return keywords.some(k => lower.includes(k));
@@ -595,7 +611,8 @@ class SummaryGenerator {
     isComorbidCondition(diagnosis) {
         const keywords = [
             'hypertension', 'diabetes', 'high cholesterol', 'obesity',
-            'heart failure', 'copd', 'asthma', 'depression', 'anxiety'
+            'heart failure', 'copd', 'asthma', 'depression', 'anxiety',
+            'hyperlipidemia', 'type 2'
         ];
         const lower = diagnosis.toLowerCase();
         return keywords.some(k => lower.includes(k));
@@ -609,26 +626,6 @@ class SummaryGenerator {
         if (name.includes('discharge')) return 'DISCHARGE SUMMARY';
         if (doc.diagnoses?.length > 0) return 'CONSULTATION';
         return 'DOCUMENT';
-    }
-
-    parseMedication(medString) {
-        const result = { name: medString, purpose: 'NA', dosage: 'NA' };
-        const dosageMatch = medString.match(/(\d+\s*(?:mg|mcg|g|ml))/i);
-        if (dosageMatch) {
-            result.dosage = dosageMatch[1];
-            result.name = medString.replace(dosageMatch[0], '').trim();
-        }
-        const purposeMap = {
-            'diabetes': ['metformin', 'glipizide', 'insulin'],
-            'blood pressure': ['lisinopril', 'amlodipine', 'losartan'],
-            'cholesterol': ['atorvastatin', 'simvastatin', 'rosuvastatin'],
-            'pain': ['ibuprofen', 'naproxen', 'tramadol']
-        };
-        const lower = medString.toLowerCase();
-        for (const [purpose, drugs] of Object.entries(purposeMap)) {
-            if (drugs.some(d => lower.includes(d))) { result.purpose = purpose; break; }
-        }
-        return result;
     }
 
     containsKeyword(text, keywords) {
@@ -663,8 +660,28 @@ class SummaryGenerator {
         return riskFactors.length > 0 ? riskFactors : ['No specific cardiac risk factors identified'];
     }
 
+    parseMedication(medString) {
+        const result = { name: medString, purpose: 'NA', dosage: 'NA' };
+        const dosageMatch = medString.match(/(\d+\s*(?:mg|mcg|g|ml))/i);
+        if (dosageMatch) {
+            result.dosage = dosageMatch[1];
+            result.name = medString.replace(dosageMatch[0], '').trim();
+        }
+        const purposeMap = {
+            'diabetes': ['metformin', 'glipizide', 'insulin'],
+            'blood pressure': ['lisinopril', 'amlodipine', 'losartan'],
+            'cholesterol': ['atorvastatin', 'simvastatin', 'rosuvastatin'],
+            'pain': ['ibuprofen', 'naproxen', 'tramadol']
+        };
+        const lower = medString.toLowerCase();
+        for (const [purpose, drugs] of Object.entries(purposeMap)) {
+            if (drugs.some(d => lower.includes(d))) { result.purpose = purpose; break; }
+        }
+        return result;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
-    // SPECIALTY SUMMARIES (unchanged logic, kept intact)
+    // SPECIALTY SUMMARIES
     // ─────────────────────────────────────────────────────────────────────────
 
     generateCardiologySummary(patient, medicalForm, documents) {
@@ -682,18 +699,14 @@ class SummaryGenerator {
         const cardiacReports = [];
 
         documents.forEach(doc => {
-            doc.diagnoses?.forEach(d => {
-                if (this.containsKeyword(d, cardiacKeywords)) cardiacDiagnoses.add(d);
-            });
+            doc.diagnoses?.forEach(d => { if (this.containsKeyword(d, cardiacKeywords)) cardiacDiagnoses.add(d); });
             doc.medications?.forEach(m => {
                 const name = typeof m === 'object' ? m.name : m;
                 if (this.containsKeyword(name, cardiacKeywords)) {
                     cardiacMedications.push({ name, purpose: m.purpose || 'NA', dosage: m.dosage || 'NA' });
                 }
             });
-            doc.labResults?.forEach(l => {
-                if (this.containsKeyword(l, cardiacKeywords)) cardiacTests.add(l);
-            });
+            doc.labResults?.forEach(l => { if (this.containsKeyword(l, cardiacKeywords)) cardiacTests.add(l); });
             if (this.containsKeyword(doc.fileName, cardiacKeywords)) {
                 cardiacReports.push({
                     name: doc.fileName,
@@ -714,9 +727,9 @@ class SummaryGenerator {
                     : 'NA',
                 bloodGroup: patient.bloodGroup || medicalForm?.personalInfo?.bloodGroup || 'NA'
             },
-            cardiacDiagnoses: Array.from(cardiacDiagnoses).length > 0 ? Array.from(cardiacDiagnoses) : ['NA'],
+            cardiacDiagnoses: cardiacDiagnoses.size > 0 ? Array.from(cardiacDiagnoses) : ['NA'],
             cardiacMedications: cardiacMedications.length > 0 ? cardiacMedications : [{ name: 'NA', purpose: 'NA', dosage: 'NA' }],
-            cardiacTests: Array.from(cardiacTests).length > 0 ? Array.from(cardiacTests) : ['NA'],
+            cardiacTests: cardiacTests.size > 0 ? Array.from(cardiacTests) : ['NA'],
             vitals: this.extractVitals(documents),
             recentCardiacReports: cardiacReports.slice(0, 5),
             riskFactors: this.calculateCardiacRiskFactors(patient, medicalForm, cardiacDiagnoses),
@@ -739,9 +752,7 @@ class SummaryGenerator {
         const orthopedicReports = [];
 
         documents.forEach(doc => {
-            doc.diagnoses?.forEach(d => {
-                if (this.containsKeyword(d, orthopedicKeywords)) orthopedicDiagnoses.add(d);
-            });
+            doc.diagnoses?.forEach(d => { if (this.containsKeyword(d, orthopedicKeywords)) orthopedicDiagnoses.add(d); });
             doc.medications?.forEach(m => {
                 const name = typeof m === 'object' ? m.name : m;
                 if (this.containsKeyword(name, ['ibuprofen', 'naproxen', 'diclofenac', 'celecoxib', 'prednisone'])) {
@@ -749,9 +760,7 @@ class SummaryGenerator {
                 }
             });
             doc.labResults?.forEach(l => {
-                if (this.containsKeyword(l, ['x-ray', 'mri', 'ct', 'ultrasound', 'bone density'])) {
-                    orthopedicImaging.add(l);
-                }
+                if (this.containsKeyword(l, ['x-ray', 'mri', 'ct', 'ultrasound', 'bone density'])) orthopedicImaging.add(l);
             });
             if (this.containsKeyword(doc.fileName, orthopedicKeywords)) {
                 orthopedicReports.push({
@@ -773,9 +782,9 @@ class SummaryGenerator {
                     : 'NA',
                 bloodGroup: patient.bloodGroup || medicalForm?.personalInfo?.bloodGroup || 'NA'
             },
-            orthopedicDiagnoses: Array.from(orthopedicDiagnoses).length > 0 ? Array.from(orthopedicDiagnoses) : ['NA'],
+            orthopedicDiagnoses: orthopedicDiagnoses.size > 0 ? Array.from(orthopedicDiagnoses) : ['NA'],
             orthopedicMedications: orthopedicMedications.length > 0 ? orthopedicMedications : [{ name: 'NA', purpose: 'NA', dosage: 'NA' }],
-            imagingResults: Array.from(orthopedicImaging).length > 0 ? Array.from(orthopedicImaging) : ['NA'],
+            imagingResults: orthopedicImaging.size > 0 ? Array.from(orthopedicImaging) : ['NA'],
             recentOrthopedicReports: orthopedicReports.slice(0, 5),
             mobilityStatus: this.extractMobilityStatus(documents),
             lastUpdated: new Date().toISOString()

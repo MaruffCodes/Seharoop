@@ -101,7 +101,11 @@ async def process_document(file: UploadFile = File(...)):
         logger.info("\n" + "-" * 40)
         logger.info("STEP 3: SUMMARY GENERATION")
         logger.info("-" * 40)
-        summary = summarizer.generate_summary(text, entities)
+        try :
+            summary = summarizer.generate_summary(text, entities)
+        except Exception as e:
+            logger.error(f"Summary generation error: {str(e)}")
+            summary = "Medical information extracted but summary generation failed."
         
         # Step 4: Calculate confidence
         confidence = {

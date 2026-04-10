@@ -8,13 +8,26 @@ const pythonService = require('./pythonClient');
 const slmClient = require('./slmClient');
 const summaryGenerator = require('./summaryGenerator');
 
+/**
+ * Fields in PatientSummary.generalSummary that must NEVER be overwritten
+ * by document extraction.  These come exclusively from the patient's
+ * manually-submitted medical form (PatientMedicalForm) or their profile.
+ *
+ * Everything else is appendable / mergeable from uploaded documents.
+ */
+const LOCKED_SUMMARY_FIELDS = new Set([
+    'patientDemographics',  // name, DOB, email, phone, patientId, gender
+    'address',              // manually entered address
+    'medicalProfile',       // bloodGroup, isDiabetic, diabetesType, hasThyroid
+]);
+
 class DocumentProcessor {
     async processDocument(fileInfo, userId) {
         const { filePath, originalName, mimeType, size, fileId } = fileInfo;
         console.log(`🔄 Starting document processing for: ${originalName}`);
 
         try {
-            // Step 1: OCR + NLP via Python
+            // ── Step 1: OCR + NLP via Python ──────────────────────────────────
             console.log('📤 Sending to Python OCR/NLP service...');
             const pythonResult = await pythonService.processDocument(filePath, originalName, mimeType);
             if (!pythonResult.success) throw new Error(pythonResult.error || 'Python processing failed');
@@ -22,17 +35,17 @@ class DocumentProcessor {
             console.log('📥 Python result received');
             console.log('📊 Python entities:', JSON.stringify(pythonResult.entities, null, 2));
 
-            // Transform Python output → MongoDB schema
+            // ── Step 2: Transform Python output → MongoDB schema ───────────────
             const transformedData = this.transformPythonResult(pythonResult);
             console.log('📊 Transformed data:', JSON.stringify(transformedData, null, 2));
 
-            // Step 2: Patient / form data
+            // ── Step 3: Patient / form data ────────────────────────────────────
             console.log('👤 Fetching patient data...');
             const user = await User.findById(userId);
             const PatientMedicalForm = require('../models/PatientMedicalForm');
             const medicalForm = await PatientMedicalForm.findOne({ patientId: userId });
 
-            // Step 3: SLM summaries — temporarily disabled
+            // ── Step 4: SLM summaries (disabled) ──────────────────────────────
             console.log('🧠 SLM summaries disabled for debugging — using fallback values');
             const fallbackSummary = (type) => ({
                 success: false,
@@ -44,8 +57,12 @@ class DocumentProcessor {
             const cardiologySummary = fallbackSummary('cardiology');
             const orthopedicSummary = fallbackSummary('orthopedic');
 
-            // Step 4: Save ProcessedDocument
+            // ── Step 5: Save ProcessedDocument ────────────────────────────────
             console.log('💾 Saving to database...');
+
+            const bloodThinnerArray = Array.isArray(transformedData.bloodThinner)
+                ? transformedData.bloodThinner : [];
+
             const processedDoc = new ProcessedDocument({
                 fileId: fileId || path.basename(filePath, path.extname(filePath)),
                 userId,
@@ -54,25 +71,23 @@ class DocumentProcessor {
                 fileSize: size,
                 extractedText: (pythonResult.text || '').substring(0, 5000),
 
-                // ── Section-isolated fields from new extractor ────────────────
-                allergies: transformedData.allergies,
-                medications: transformedData.medications,
-                comorbidConditions: transformedData.comorbidConditions,
-                chronicDiseases: transformedData.chronicDiseases,
-                pastSurgeries: transformedData.pastSurgeries,
-                majorIllnesses: transformedData.majorIllnesses,
-                interventions: transformedData.interventions,
-                bloodThinner: transformedData.bloodThinner,
-                emergencyContact: transformedData.emergencyContact,
-                parsedMedicalHistory: transformedData.parsedMedicalHistory,
+                allergies: transformedData.allergies || [],
+                medications: transformedData.medications || [],
+                comorbidConditions: transformedData.comorbidConditions || [],
+                chronicDiseases: transformedData.chronicDiseases || [],
+                pastSurgeries: transformedData.pastSurgeries || [],
+                majorIllnesses: transformedData.majorIllnesses || [],
+                interventions: transformedData.interventions || [],
+                bloodThinner: bloodThinnerArray,
+                emergencyContact: transformedData.emergencyContact || { name: 'NA', relationship: 'NA', phone: 'NA' },
+                parsedMedicalHistory: transformedData.parsedMedicalHistory || [],
 
-                // ── Legacy / general fields ───────────────────────────────────
-                diagnoses: transformedData.diagnoses,
-                labResults: transformedData.labResults,
-                dates: transformedData.dates,
-                doctors: transformedData.doctors,
-                hospitals: transformedData.hospitals,
-                vitals: transformedData.vitals,
+                diagnoses: transformedData.diagnoses || [],
+                labResults: transformedData.labResults || [],
+                dates: transformedData.dates || [],
+                doctors: transformedData.doctors || [],
+                hospitals: transformedData.hospitals || [],
+                vitals: transformedData.vitals || new Map(),
 
                 summary: generalSummary?.summary || pythonResult.summary || '',
                 slmSummaries: { general: generalSummary, cardiology: cardiologySummary, orthopedic: orthopedicSummary },
@@ -98,11 +113,11 @@ class DocumentProcessor {
             await processedDoc.save();
             console.log('✅ Document saved:', processedDoc._id);
 
-            // Step 5: Update patient medical history
+            // ── Step 6: Update patient medical history ─────────────────────────
             console.log('📊 Updating patient history...');
             await this.updatePatientHistory(userId, processedDoc, transformedData, generalSummary);
 
-            // Step 6: Refresh all summaries
+            // ── Step 7: Refresh all summaries (APPEND mode) ────────────────────
             console.log('📊 Refreshing all patient summaries...');
             try {
                 const allDocuments = await ProcessedDocument.find({ userId }).sort({ processedAt: -1 });
@@ -110,9 +125,26 @@ class DocumentProcessor {
                 let patientSummary = await PatientSummary.findOne({ patientId: userId });
                 if (!patientSummary) patientSummary = new PatientSummary({ patientId: userId });
 
-                patientSummary.generalSummary = summaryGenerator.generateGeneralSummary(patient, medicalForm, allDocuments);
-                patientSummary.cardiologySummary = summaryGenerator.generateCardiologySummary(patient, medicalForm, allDocuments);
-                patientSummary.orthopedicSummary = summaryGenerator.generateOrthopedicSummary(patient, medicalForm, allDocuments);
+                const newGeneral = summaryGenerator.generateGeneralSummary(patient, medicalForm, allDocuments);
+                const newCardiology = summaryGenerator.generateCardiologySummary(patient, medicalForm, allDocuments);
+                const newOrthopedic = summaryGenerator.generateOrthopedicSummary(patient, medicalForm, allDocuments);
+
+                // ── LOCKED FIELD PROTECTION ──────────────────────────────────
+                // If a summary already exists, preserve locked fields from the
+                // stored version (which came from the medical form) rather than
+                // letting document extraction overwrite them.
+                if (patientSummary.generalSummary) {
+                    const existing = patientSummary.generalSummary;
+                    for (const lockedField of LOCKED_SUMMARY_FIELDS) {
+                        if (existing[lockedField] !== undefined && existing[lockedField] !== null) {
+                            newGeneral[lockedField] = existing[lockedField];
+                        }
+                    }
+                }
+
+                patientSummary.generalSummary = newGeneral;
+                patientSummary.cardiologySummary = newCardiology;
+                patientSummary.orthopedicSummary = newOrthopedic;
                 patientSummary.slmSummaries = { general: generalSummary, cardiology: cardiologySummary, orthopedic: orthopedicSummary };
                 patientSummary.lastUpdated = new Date();
                 patientSummary.documentCount = allDocuments.length;
@@ -124,11 +156,11 @@ class DocumentProcessor {
                 console.error('⚠️ Could not refresh summaries:', summaryError.message);
             }
 
-            // Step 7: QR code
+            // ── Step 8: QR code ────────────────────────────────────────────────
             console.log('📱 Refreshing QR code...');
             await this.refreshPatientQRCode(userId);
 
-            // Step 8: Move file to permanent storage
+            // ── Step 9: Move file to permanent storage ─────────────────────────
             console.log('📁 Moving to permanent storage...');
             await this.moveFile(filePath, fileId, originalName);
 
@@ -150,45 +182,53 @@ class DocumentProcessor {
 
     // ─────────────────────────────────────────────────────────────────────────
     // TRANSFORM PYTHON RESULT
-    // Maps the new MedicalEntityExtractor output to ProcessedDocument fields.
     // ─────────────────────────────────────────────────────────────────────────
 
     transformPythonResult(pythonResult) {
         const entities = pythonResult.entities || {};
 
-        /*
-         * The new Python extractor returns rich structured sub-objects.
-         * Old extractor returned flat string arrays.
-         * We handle both shapes here with safe fallbacks.
-         */
-
-        // ── ALLERGIES — must come ONLY from entities.allergies (section-isolated)
+        // ── ALLERGIES
         const allergies = (entities.allergies || [])
-            .filter(a => a && a !== 'NA')
-            .map(a => (typeof a === 'string' ? { name: a } : a));
+            .filter(a => a && a !== 'NA' && a !== 'null')
+            .map(a => typeof a === 'string' ? { name: a } : { name: a.name || a });
 
-        // ── MEDICATIONS — from entities.medications (already structured)
-        const medications = (entities.medications || []).map(m => {
+        // ── MEDICATIONS — prefer currentMedications, fall back to medications
+        let medications = [];
+        const src = entities.currentMedications?.length
+            ? entities.currentMedications
+            : (entities.medications || []);
+
+        medications = src.map(m => {
             if (typeof m === 'string') return this.parseMedication(m);
             return {
                 name: m.name || 'Unknown',
-                purpose: m.purpose || 'NA',
-                dosage: m.dosage || 'NA'
+                purpose: m.purpose || m.indication || 'NA',
+                dosage: m.dosage || m.dosage_text || 'NA'
             };
         });
 
-        // ── COMORBID / CHRONIC — from dedicated section arrays
+        // Deduplicate by name
+        const seenMedNames = new Set();
+        medications = medications.filter(med => {
+            const k = med.name.toLowerCase();
+            if (seenMedNames.has(k)) return false;
+            seenMedNames.add(k);
+            return true;
+        });
+
+        // ── COMORBID / CHRONIC
         const comorbidConditions = (entities.comorbidConditions || [])
             .filter(c => c && c !== 'NA')
-            .map(c => (typeof c === 'string' ? { name: c } : c));
+            .map(c => typeof c === 'string' ? { name: c } : { name: c.name || c });
 
         const chronicDiseases = (entities.chronicDiseases || [])
             .filter(c => c && c !== 'NA')
-            .map(c => (typeof c === 'string' ? { name: c } : c));
+            .map(c => typeof c === 'string' ? { name: c } : { name: c.name || c });
 
-        // ── PAST SURGERIES
+        // ── PAST SURGERIES — keep all fields including NA values so the
+        //    summary generator can display "Date: NA" rather than omit the field
         const pastSurgeries = (entities.pastSurgeries || []).map(s => ({
-            name: s.name || 'NA',
+            name: (s.name || 'NA').replace(/^[«»\s]+/, '').trim(),
             date: s.date || 'NA',
             hospital: s.hospital || 'NA',
             surgeon: s.surgeon || 'NA'
@@ -204,14 +244,14 @@ class DocumentProcessor {
 
         // ── INTERVENTIONS
         const interventions = (entities.interventions || []).map(iv => ({
-            name: iv.name || 'NA',
+            name: (iv.name || 'NA').replace(/^\+?\s*/, '').trim(),
             date: iv.date || 'NA',
             hospital: iv.hospital || 'NA'
         }));
 
         // ── BLOOD THINNER
         const bloodThinner = (entities.bloodThinner || []).map(bt => ({
-            name: bt.name || 'NA',
+            name: (bt.name || 'NA').replace(/^\+?\s*/, '').trim(),
             type: bt.type || 'NA',
             duration: bt.duration || 'NA',
             reason: bt.reason || 'NA'
@@ -223,36 +263,28 @@ class DocumentProcessor {
         // ── PARSED MEDICAL HISTORY
         const parsedMedicalHistory = entities.medicalHistory || [];
 
-        // ── DATES — normalise to {text, normalized} objects
+        // ── DATES
         const dates = (entities.dates || []).map(d => ({
             text: typeof d === 'string' ? d : d.text,
             normalized: this.normalizeDate(typeof d === 'string' ? d : d.text)
         }));
 
-        // ── DIAGNOSES, LAB RESULTS, DOCTORS, HOSPITALS, VITALS
+        // ── REST
         const diagnoses = Array.isArray(entities.diagnoses) ? entities.diagnoses : [];
         const labResults = Array.isArray(entities.lab_results) ? entities.lab_results : [];
         const doctors = Array.isArray(entities.doctors) ? entities.doctors : [];
         const hospitals = Array.isArray(entities.hospitals) ? entities.hospitals : [];
-        const vitals = entities.vitals || {};
+
+        let vitals = new Map();
+        if (entities.vitals && typeof entities.vitals === 'object') {
+            vitals = new Map(Object.entries(entities.vitals));
+        }
 
         return {
-            allergies,
-            medications,
-            comorbidConditions,
-            chronicDiseases,
-            pastSurgeries,
-            majorIllnesses,
-            interventions,
-            bloodThinner,
-            emergencyContact,
-            parsedMedicalHistory,
-            diagnoses,
-            labResults,
-            dates,
-            doctors,
-            hospitals,
-            vitals,
+            allergies, medications, comorbidConditions, chronicDiseases,
+            pastSurgeries, majorIllnesses, interventions, bloodThinner,
+            emergencyContact, parsedMedicalHistory,
+            diagnoses, labResults, dates, doctors, hospitals, vitals,
             summary: pythonResult.summary || ''
         };
     }
@@ -260,12 +292,6 @@ class DocumentProcessor {
     // ─────────────────────────────────────────────────────────────────────────
     // HELPERS
     // ─────────────────────────────────────────────────────────────────────────
-
-    formatAddress(address) {
-        if (!address) return null;
-        return [address.street, address.city, address.state, address.pincode, address.country]
-            .filter(Boolean).join(', ') || null;
-    }
 
     parseMedication(medString) {
         const result = { name: medString, purpose: 'NA', dosage: 'NA' };
@@ -307,12 +333,19 @@ class DocumentProcessor {
             if (!user.medicalHistory) user.medicalHistory = [];
 
             let yearEntry = user.medicalHistory.find(y => y.year === currentYear);
-            if (!yearEntry) { yearEntry = { year: currentYear, months: [] }; user.medicalHistory.push(yearEntry); }
+            if (!yearEntry) {
+                yearEntry = { year: currentYear, months: [] };
+                user.medicalHistory.push(yearEntry);
+            }
 
             let monthEntry = yearEntry.months.find(m => m.month === currentMonth);
-            if (!monthEntry) { monthEntry = { month: currentMonth, records: [] }; yearEntry.months.push(monthEntry); }
+            if (!monthEntry) {
+                monthEntry = { month: currentMonth, records: [] };
+                yearEntry.months.push(monthEntry);
+            }
 
-            const description = slmSummary?.summary || transformedData.summary || `Medical document: ${document.fileName}`;
+            const description = slmSummary?.summary || transformedData.summary
+                || `Medical document: ${document.fileName}`;
 
             monthEntry.records.push({
                 date: new Date(),
@@ -362,9 +395,10 @@ class DocumentProcessor {
                 doc.diagnoses?.slice(0, 5).forEach(d => allDiagnoses.add(d));
                 doc.medications?.slice(0, 5).forEach(m => {
                     const name = m?.name || m;
-                    if (!allMedsMap.has(name)) allMedsMap.set(name, { name, purpose: m?.purpose || 'NA', dosage: m?.dosage || 'NA' });
+                    if (!allMedsMap.has(name)) {
+                        allMedsMap.set(name, { name, purpose: m?.purpose || 'NA', dosage: m?.dosage || 'NA' });
+                    }
                 });
-                // Allergies: read name from object if new shape
                 doc.allergies?.slice(0, 5).forEach(a => allAllergies.add(a?.name || a));
                 doc.labResults?.slice(0, 3).forEach(l => allLabResults.add(l));
             });

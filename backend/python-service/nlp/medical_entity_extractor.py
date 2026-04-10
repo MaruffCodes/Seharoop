@@ -1,6 +1,6 @@
 import spacy
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Any, Set, Optional
 import logging
 import json
 
@@ -14,409 +14,615 @@ class MedicalEntityExtractor:
         except:
             self.nlp = spacy.load("en_core_web_sm")
             logger.warning("⚠️ Medical model not found, using general model")
-
-        # Section header patterns - used for boundary detection
-        self.section_headers = {
-            'PATIENT DEMOGRAPHICS': 'demographics',
-            'ADDRESS': 'address',
-            'MEDICAL PROFILE': 'medical_profile',
-            'ALLERGIES': 'allergies',
-            'COMORBID CONDITIONS': 'comorbid',
-            'CHRONIC DISEASES': 'chronic',
-            'CURRENT MEDICATIONS': 'medications',
-            'PAST SURGERIES': 'past_surgeries',
-            'MAJOR SURGERIES': 'major_illnesses',
-            'MAJOR SURGERIES / ILLNESS': 'major_illnesses',
-            'PREVIOUS INTERVENTIONS': 'interventions',
-            'BLOOD THINNER HISTORY': 'blood_thinner',
-            'EMERGENCY CONTACT': 'emergency_contact',
-            'MEDICAL HISTORY': 'medical_history',
+        
+        self.seen_items: Dict[str, Set[str]] = {
+            'allergies': set(),
+            'comorbidConditions': set(),
+            'chronicDiseases': set(),
+            'diagnoses': set(),
+            'medications': set(),
+            'pastSurgeries': set(),
+            'majorIllnesses': set(),
+            'interventions': set(),
+            'bloodThinner': set(),
+            'hospitals': set(),
+            'doctors': set()
         }
-
-        # ONLY used when section-aware parsing fails to find something
-        self.fallback_patterns = {
-            'diagnoses': [
-                r'(?:diagnosed with|suffers from|history of)\s+([A-Za-z\s]+?)(?=\s*[\.\,\n])',
-                r'\b(hypertension|diabetes mellitus|type\s*[12]\s*diabetes|asthma|copd|arthritis|heart disease|ckd|cad|chf|hyperthyroidism|hypothyroidism)\b',
-            ],
-            'lab_results': [
-                r'\b(blood sugar|glucose|cholesterol|hba1c|creatinine|wbc|rbc|platelet)\s+(\d+\.?\d*)',
-                r'\b(cbc|lipid panel|thyroid panel|metabolic panel)\b',
-                r'\b(\d+\.?\d*\s*(?:mg/dl|mmol/l|mEq/l|%|g/dl))\b'
-            ],
-        }
-
-    # ------------------------------------------------------------------
-    # PUBLIC ENTRY POINT
-    # ------------------------------------------------------------------
-    def extract(self, text: str) -> Dict:
+    
+    def reset_seen_items(self) -> None:
+        for key in self.seen_items:
+            self.seen_items[key].clear()
+    
+    def _remove_bullet(self, text: str) -> str:
+        """Remove any bullet/list character from the start of a string."""
+        return re.sub(r'^[\s•*\-–—▪✓►→❯›¢£¥§©®™+|/\\«»]+', '', text).strip()
+    
+    def _is_bullet(self, text: str) -> bool:
+        """Check if text starts with a bullet character."""
+        return bool(re.match(r'^[\s•*\-–—▪✓►→❯›¢£¥§©®™+|/\\«»]', text))
+    
+    def _split_items(self, text: str, separators: List[str] = None) -> List[str]:
+        """Split text into items using multiple separators - IMPROVED."""
+        if separators is None:
+            separators = ['•', '*', '–', '—', '▪', '✓', '►', '→', '¢', '+', '|', '«', '»']
+        
+        # Build regex pattern for separators
+        pattern = '|'.join(re.escape(s) for s in separators)
+        
+        # Split by separators
+        items = re.split(f'[{pattern}]', text)
+        
+        # Clean each item
+        cleaned = []
+        for item in items:
+            # Remove extra whitespace and special chars
+            item = re.sub(r'[«»]', '', item).strip()
+            item = re.sub(r'\s+', ' ', item).strip()
+            
+            if item and len(item) > 1 and item.upper() != 'NA' and item != 'None':
+                cleaned.append(item)
+        
+        return cleaned if cleaned else [text.strip()] if text.strip() else []
+    
+    def extract(self, text: str) -> Dict[str, Any]:
+        """Extract medical entities from any document format."""
         if not text:
-            logger.warning("⚠️ Empty text provided for extraction")
             return self._empty_result()
-
+        
         logger.info("=" * 50)
         logger.info("🔍 STARTING MEDICAL ENTITY EXTRACTION")
+        logger.info("=" * 50)
         logger.info(f"📄 Text length: {len(text)} characters")
-
+        
+        self.reset_seen_items()
+        
         try:
-            # ── Step 1: split text into labelled sections ──────────────
-            sections = self._split_into_sections(text)
-            logger.info(f"📑 Sections found: {list(sections.keys())}")
-
-            # ── Step 2: parse each section independently ───────────────
-            entities = self._empty_result()
-
-            entities['demographics']     = self._parse_demographics(sections.get('demographics', ''))
-            entities['address']          = self._parse_address(sections.get('address', ''))
-            entities['allergies']        = self._parse_bullet_list(sections.get('allergies', ''))
-            entities['comorbidConditions']= self._parse_bullet_list(sections.get('comorbid', ''))
-            entities['chronicDiseases']  = self._parse_bullet_list(sections.get('chronic', ''))
-            entities['medications']      = self._parse_medications(sections.get('medications', ''))
-            entities['pastSurgeries']    = self._parse_structured_items(sections.get('past_surgeries', ''),
-                                                                         ['Date', 'Hospital', 'Surgeon'])
-            entities['majorIllnesses']   = self._parse_structured_items(sections.get('major_illnesses', ''),
-                                                                         ['Date', 'Hospital', 'Notes'])
-            entities['interventions']    = self._parse_structured_items(sections.get('interventions', ''),
-                                                                         ['Date', 'Hospital'])
-            entities['bloodThinner']     = self._parse_structured_items(sections.get('blood_thinner', ''),
-                                                                         ['Type', 'Duration', 'Reason'],
-                                                                         name_key='name_with_type')
-            entities['emergencyContact'] = self._parse_emergency_contact(sections.get('emergency_contact', ''))
-            entities['medicalHistory']   = self._parse_medical_history(sections.get('medical_history', ''))
-
-            # ── Step 3: SpaCy NER for hospitals, doctors, dates ────────
-            doc = self.nlp(text[:10000])
-            for ent in doc.ents:
-                if ent.label_ == 'DATE':
-                    entities['dates'].append(ent.text)
-                elif ent.label_ == 'PERSON' and re.search(r'\bDr\.?\b', ent.text):
-                    entities['doctors'].append(ent.text)
-                elif ent.label_ == 'ORG' and any(w in ent.text.lower() for w in ['hospital', 'clinic', 'centre', 'center']):
-                    entities['hospitals'].append(ent.text)
-
-            # Also pick hospitals/doctors from structured sections
-            for section_text in sections.values():
-                for line in section_text.split('\n'):
-                    m = re.search(r'Hospital:\s*(.+)', line)
-                    if m:
-                        h = m.group(1).strip().rstrip(',')
-                        if h and h != 'NA':
-                            entities['hospitals'].append(h)
-                    m = re.search(r'Surgeon:\s*(.+)', line)
-                    if m:
-                        d = m.group(1).strip()
-                        if d and d != 'NA':
-                            entities['doctors'].append(d)
-
-            # ── Step 4: fallback regex for diagnoses / lab results ─────
-            for category, patterns in self.fallback_patterns.items():
-                if not entities.get(category):
-                    for pattern in patterns:
-                        matches = re.findall(pattern, text, re.IGNORECASE)
-                        for match in matches:
-                            val = match[-1] if isinstance(match, tuple) else match
-                            val = val.strip()
-                            if val and val not in entities[category]:
-                                entities[category].append(val)
-
-            # ── Step 5: vital signs ────────────────────────────────────
-            entities['vitals'] = self._extract_vitals(text)
-
-            # ── Step 6: deduplicate lists ──────────────────────────────
-            for key in ('dates', 'doctors', 'hospitals', 'diagnoses', 'lab_results'):
-                entities[key] = list(dict.fromkeys(entities[key]))[:10]
-
+            entities = {
+                'diagnoses': [],
+                'medications': [],
+                'lab_results': [],
+                'allergies': [],
+                'dates': [],
+                'doctors': [],
+                'hospitals': [],
+                'vitals': {},
+                'pastSurgeries': [],
+                'majorIllnesses': [],
+                'interventions': [],
+                'bloodThinner': [],
+                'emergencyContact': {},
+                'medicalHistory': [],
+                'comorbidConditions': [],
+                'chronicDiseases': [],
+                'currentMedications': []
+            }
+            
+            # Universal section extraction (handles ALL formats)
+            sections = self._extract_sections_universal(text)
+            logger.info(f"📋 Found sections: {list(sections.keys())}")
+            
+            # ======= ALLERGIES ================================================
+            allergy_text = sections.get('ALLERGIES', '')
+            if allergy_text:
+                items = self._split_items(allergy_text)
+                for item in items:
+                    name = re.sub(r'[«»]', '', item).strip()
+                    if name and len(name) > 1:
+                        key = name.lower()
+                        if key not in self.seen_items['allergies']:
+                            self.seen_items['allergies'].add(key)
+                            entities['allergies'].append(name)
+                            logger.info(f"  Found allergy: {name}")
+            
+            # ======= COMORBID CONDITIONS ======================================
+            comorbid_text = sections.get('COMORBID CONDITIONS', '')
+            if comorbid_text:
+                items = self._split_items(comorbid_text)
+                for item in items:
+                    name = re.sub(r'[()]', '', item).strip()
+                    if name and len(name) > 1:
+                        key = name.lower()
+                        if key not in self.seen_items['comorbidConditions']:
+                            self.seen_items['comorbidConditions'].add(key)
+                            entities['comorbidConditions'].append(name)
+                            logger.info(f"  Found comorbid condition: {name}")
+            
+            # ======= CHRONIC DISEASES =========================================
+            chronic_text = sections.get('CHRONIC DISEASES', '')
+            if chronic_text:
+                items = self._split_items(chronic_text)
+                for item in items:
+                    name = item.strip()
+                    if name and len(name) > 1:
+                        key = name.lower()
+                        if key not in self.seen_items['chronicDiseases']:
+                            self.seen_items['chronicDiseases'].add(key)
+                            self.seen_items['diagnoses'].add(key)
+                            entities['chronicDiseases'].append(name)
+                            entities['diagnoses'].append(name)
+                            logger.info(f"  Found chronic disease: {name}")
+            
+            # ======= CURRENT MEDICATIONS ======================================
+            med_text = sections.get('CURRENT MEDICATIONS', '')
+            if med_text:
+                logger.info(f"📋 Raw medication text: {repr(med_text[:400])}")
+                self._parse_medications_universal(med_text, entities)
+            
+            # ======= PAST SURGERIES ===========================================
+            surgery_text = sections.get('PAST SURGERIES', '')
+            if surgery_text:
+                logger.info(f"📋 Raw surgery text: {repr(surgery_text[:200])}")
+                self._parse_surgeries_universal(surgery_text, entities)
+            
+            # ======= MAJOR ILLNESSES ==========================================
+            major_text = sections.get('MAJOR SURGERIES / ILLNESS', '') or sections.get('MAJOR SURGERIES', '')
+            if major_text:
+                self._parse_major_illnesses_universal(major_text, entities)
+            
+            # ======= PREVIOUS INTERVENTIONS ===================================
+            iv_text = sections.get('PREVIOUS INTERVENTIONS', '')
+            if iv_text:
+                self._parse_interventions_universal(iv_text, entities)
+            
+            # ======= BLOOD THINNER ============================================
+            bt_text = sections.get('BLOOD THINNER HISTORY', '')
+            if bt_text:
+                self._parse_blood_thinner_universal(bt_text, entities)
+            
+            # ======= EMERGENCY CONTACT ========================================
+            ec_text = sections.get('EMERGENCY CONTACT', '')
+            if ec_text:
+                # Clean the text first
+                ec_text = re.sub(r'\s+', ' ', ec_text).strip()
+                
+                name_match = re.search(r'Name:\s*([^,\n]+?)(?:\s+Relationship:|$)', ec_text, re.IGNORECASE)
+                if name_match:
+                    entities['emergencyContact']['name'] = name_match.group(1).strip()
+                
+                rel_match = re.search(r'Relationship:\s*([^,\n]+?)(?:\s+Phone:|$)', ec_text, re.IGNORECASE)
+                if rel_match:
+                    entities['emergencyContact']['relationship'] = rel_match.group(1).strip()
+                
+                phone_match = re.search(r'Phone:\s*([^,\n]+)', ec_text, re.IGNORECASE)
+                if phone_match:
+                    entities['emergencyContact']['phone'] = phone_match.group(1).strip()
+            
+            # ======= DIAGNOSES FALLBACK =======================================
+            self._extract_diagnoses_fallback(text, entities)
+            
+            # Clean entities
+            entities = self._clean_entities(entities)
+            
+            logger.info("\n" + "=" * 50)
             logger.info("📊 FINAL EXTRACTED ENTITIES:")
-            logger.info(json.dumps(
-                {k: v for k, v in entities.items() if k != 'medicalHistory'},
-                indent=2, default=str
-            ))
+            logger.info(json.dumps(entities, indent=2, default=str))
+            logger.info("=" * 50)
+            
             return entities
-
+            
         except Exception as e:
-            logger.error(f"❌ Entity extraction error: {str(e)}", exc_info=True)
+            logger.error(f"❌ Entity extraction error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return self._empty_result()
-
-    # ------------------------------------------------------------------
-    # SECTION SPLITTER
-    # ------------------------------------------------------------------
-    def _split_into_sections(self, text: str) -> Dict[str, str]:
-        """
-        Split the document into named sections using header detection.
-        Each section contains only the text between its header and the next header.
-        """
-        lines = text.split('\n')
-        sections: Dict[str, str] = {}
-        current_key = None
-        buffer = []
-
-        for line in lines:
-            stripped = line.strip().upper()
-
-            # Try to match a known section header
-            matched_key = None
-            for header, key in self.section_headers.items():
-                if stripped == header or stripped.startswith(header):
-                    matched_key = key
-                    break
-
-            if matched_key:
-                # Save previous section
-                if current_key and buffer:
-                    sections[current_key] = '\n'.join(buffer).strip()
-                current_key = matched_key
-                buffer = []
+    
+    # =========================================================================
+    # UNIVERSAL SECTION EXTRACTOR
+    # =========================================================================
+    
+    def _extract_sections_universal(self, text: str) -> Dict[str, str]:
+        """Extract sections from ANY document format."""
+        sections = {}
+        
+        # List of section headers
+        headers = [
+            'PATIENT DEMOGRAPHICS', 'ADDRESS', 'MEDICAL PROFILE',
+            'ALLERGIES', 'COMORBID CONDITIONS', 'CHRONIC DISEASES',
+            'CURRENT MEDICATIONS', 'PAST SURGERIES', 'MAJOR SURGERIES',
+            'MAJOR SURGERIES / ILLNESS', 'PREVIOUS INTERVENTIONS',
+            'BLOOD THINNER HISTORY', 'EMERGENCY CONTACT', 'MEDICAL HISTORY'
+        ]
+        
+        # Method 1: Find headers with content on same line
+        for i, header in enumerate(headers):
+            next_header = headers[i + 1] if i + 1 < len(headers) else None
+            
+            if next_header:
+                pattern = re.compile(
+                    rf'{re.escape(header)}(?::|\s+)(.*?)(?={re.escape(next_header)}|\Z)',
+                    re.DOTALL | re.IGNORECASE
+                )
             else:
-                if current_key is not None:
-                    buffer.append(line)
-
-        # Save last section
-        if current_key and buffer:
-            sections[current_key] = '\n'.join(buffer).strip()
-
+                pattern = re.compile(
+                    rf'{re.escape(header)}(?::|\s+)(.*?)\Z',
+                    re.DOTALL | re.IGNORECASE
+                )
+            
+            match = pattern.search(text)
+            if match:
+                content = match.group(1).strip()
+                if content:
+                    sections[header.upper()] = content
+                    logger.info(f"  Found section {header} with content length {len(content)}")
+        
+        # Method 2: If no sections found, try line-by-line
+        if not sections:
+            sections = self._extract_sections_by_lines(text, headers)
+        
         return sections
-
-    # ------------------------------------------------------------------
-    # SECTION PARSERS
-    # ------------------------------------------------------------------
-    def _parse_demographics(self, text: str) -> Dict[str, str]:
-        result = {
-            'name': 'NA', 'patientId': 'NA', 'dateOfBirth': 'NA',
-            'age': 'NA', 'gender': 'NA', 'email': 'NA', 'phone': 'NA'
-        }
-        if not text:
-            return result
-
-        patterns = {
-            'name':        r'Name\s*:\s*(.+)',
-            'patientId':   r'Patient\s*ID\s*:\s*(.+)',
-            'dateOfBirth': r'Date\s*of\s*Birth\s*:\s*(.+)',
-            'age':         r'\((\d+\s*years?)\)',
-            'gender':      r'Gender\s*:\s*(.+)',
-            'email':       r'Email\s*:\s*(\S+@\S+)',
-            'phone':       r'Phone\s*:\s*([\+\d\s\-]+)',
-        }
-        for field, pattern in patterns.items():
-            m = re.search(pattern, text, re.IGNORECASE)
-            if m:
-                result[field] = m.group(1).strip()
-
-        return result
-
-    def _parse_address(self, text: str) -> str:
-        if not text:
-            return 'NA'
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        return ', '.join(lines) if lines else 'NA'
-
-    def _parse_bullet_list(self, text: str) -> List[str]:
-        """Extract bullet-point items from a section."""
-        if not text:
-            return []
-        items = []
-        for line in text.split('\n'):
-            line = line.strip()
-            if line.startswith(('•', '*', '-', '–')):
-                item = re.sub(r'^[•\*\-–]\s*', '', line).strip()
-                if item and item.lower() != 'na':
-                    items.append(item)
-        return items
-
-    def _parse_medications(self, text: str) -> List[Dict]:
-        """
-        Parse medications section.
-        Handles formats like:
-          • Metformin – Diabetes Control (500mg twice daily)
-          • Amlodipine – Blood Pressure (5mg once daily)
-        """
-        if not text:
-            return []
-
-        medications = []
-        for line in text.split('\n'):
-            line = line.strip()
-            if not line.startswith(('•', '*', '-', '–')):
+    
+    def _extract_sections_by_lines(self, text: str, headers: List[str]) -> Dict[str, str]:
+        """Fallback: Extract sections by scanning line by line."""
+        sections = {}
+        lines = text.split('\n')
+        current_header = None
+        current_content = []
+        
+        for line in lines:
+            line_upper = line.strip().upper()
+            matched_header = None
+            
+            for header in headers:
+                if line_upper.startswith(header.upper()) or header.upper() in line_upper:
+                    matched_header = header.upper()
+                    break
+            
+            if matched_header:
+                if current_header and current_content:
+                    sections[current_header] = ' '.join(current_content).strip()
+                current_header = matched_header
+                content = re.sub(rf'^{re.escape(matched_header)}', '', line, flags=re.IGNORECASE).strip()
+                current_content = [content] if content else []
+            elif current_header:
+                current_content.append(line.strip())
+        
+        if current_header and current_content:
+            sections[current_header] = ' '.join(current_content).strip()
+        
+        return sections
+    
+    # =========================================================================
+    # UNIVERSAL MEDICATION PARSER - FIXED
+    # =========================================================================
+    
+    def _parse_medications_universal(self, med_text: str, entities: dict) -> None:
+        """Parse medications from ANY format - IMPROVED."""
+        # Clean the text first
+        med_text = re.sub(r'\s+', ' ', med_text).strip()
+        
+        # Split by bullet points
+        meds = self._split_items(med_text)
+        
+        for med in meds:
+            if not med or len(med) < 3:
                 continue
-
-            raw = re.sub(r'^[•\*\-–]\s*', '', line).strip()
-            if not raw or raw.lower() == 'na':
-                continue
-
-            med = {'name': raw, 'purpose': 'NA', 'dosage': 'NA'}
-
-            # Extract dosage from parentheses: (500mg twice daily)
-            dosage_match = re.search(r'\(([^)]+(?:mg|mcg|g|ml|once|twice|daily|weekly)[^)]*)\)', raw, re.IGNORECASE)
-            if dosage_match:
-                med['dosage'] = dosage_match.group(1).strip()
-                raw = raw[:dosage_match.start()].strip()
-
-            # Split on dash/em-dash: "Metformin – Diabetes Control"
-            parts = re.split(r'\s*[–\-—]\s*', raw, maxsplit=1)
-            med['name'] = parts[0].strip()
-            if len(parts) > 1:
-                med['purpose'] = parts[1].strip()
-
-            medications.append(med)
-
-        return medications
-
-    def _parse_structured_items(self, text: str, sub_fields: List[str],
-                                 name_key: str = 'name') -> List[Dict]:
-        """
-        Generic parser for sections that have:
-          • Item Name
-            Field1: value
-            Field2: value
-        """
-        if not text:
-            return []
-
-        items = []
-        current: Optional[Dict] = None
-
-        for line in text.split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-
-            if line.startswith(('•', '*', '-', '–')):
-                if current:
-                    items.append(current)
-                raw_name = re.sub(r'^[•\*\-–]\s*', '', line).strip()
-
-                if name_key == 'name_with_type':
-                    # e.g. "Aspirin (Antiplatelet)" → name=Aspirin, type=Antiplatelet
-                    m = re.match(r'(.+?)\s*\(([^)]+)\)', raw_name)
-                    if m:
-                        current = {'name': m.group(1).strip(),
-                                   'type': m.group(2).strip()}
-                    else:
-                        current = {'name': raw_name, 'type': 'NA'}
-                else:
-                    current = {'name': raw_name}
-
-                for sf in sub_fields:
-                    if sf.lower() != 'type':  # already set above if name_with_type
-                        current[sf.lower()] = 'NA'
+            
+            name = None
+            purpose = None
+            dosage = None
+            
+            # Pattern: "Methotrexate – Autoimmune (15mg once weekly)"
+            match = re.match(r'^([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*[—–-]\s*([A-Za-z\s]+?)\s*\(([^)]+)\)', med, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                purpose = match.group(2).strip()
+                dosage = match.group(3).strip()
             else:
-                if current is None:
-                    continue
-                for sf in sub_fields:
-                    if line.lower().startswith(sf.lower() + ':'):
-                        current[sf.lower()] = line[len(sf)+1:].strip()
-                        break
-
-        if current:
-            items.append(current)
-
-        return items
-
-    def _parse_emergency_contact(self, text: str) -> Dict[str, str]:
-        result = {'name': 'NA', 'relationship': 'NA', 'phone': 'NA'}
-        if not text:
-            return result
-
-        for line in text.split('\n'):
-            line = line.strip()
-            m = re.match(r'Name\s*:\s*(.+)', line, re.IGNORECASE)
-            if m:
-                result['name'] = m.group(1).strip()
-            m = re.match(r'Relationship\s*:\s*(.+)', line, re.IGNORECASE)
-            if m:
-                result['relationship'] = m.group(1).strip()
-            m = re.match(r'Phone\s*:\s*([\+\d\s\-]+)', line, re.IGNORECASE)
-            if m:
-                result['phone'] = m.group(1).strip()
-
-        return result
-
-    def _parse_medical_history(self, text: str) -> List[Dict]:
-        """
-        Parse nested YEAR / Month / Day – TYPE description structure.
-        """
-        if not text:
-            return []
-
-        history = []
-        current_year = None
-        current_month = None
-
-        month_names = {
-            'january','february','march','april','may','june',
-            'july','august','september','october','november','december'
-        }
-
-        for line in text.split('\n'):
-            stripped = line.strip()
-            if not stripped:
+                # Pattern: "Pantoprazole – Gastric Acidity (40mg before breakfast)"
+                match = re.match(r'^([A-Za-z]+)\s*[—–-]\s*([A-Za-z\s]+?)\s*\(([^)]+)\)', med, re.IGNORECASE)
+                if match:
+                    name = match.group(1).strip()
+                    purpose = match.group(2).strip()
+                    dosage = match.group(3).strip()
+                else:
+                    # Pattern: Just "Folic Acid" (two words)
+                    match = re.match(r'^([A-Za-z]+\s+[A-Za-z]+)', med, re.IGNORECASE)
+                    if match:
+                        name = match.group(1).strip()
+                        purpose = "Prescribed"
+                        dosage = "Not specified"
+                    else:
+                        # Pattern: Single word medication
+                        match = re.match(r'^([A-Za-z]+)', med, re.IGNORECASE)
+                        if match:
+                            name = match.group(1).strip()
+                            purpose = "Prescribed"
+                            dosage = "Not specified"
+            
+            if name and len(name) >= 2:
+                # Clean the name
+                name = re.sub(r'[°*]', '', name).strip()
+                key = name.lower()
+                
+                if key not in self.seen_items['medications']:
+                    self.seen_items['medications'].add(key)
+                    entities['currentMedications'].append({
+                        'name': name,
+                        'purpose': purpose if purpose and purpose != 'Prescribed' else "Prescribed",
+                        'dosage': dosage if dosage else "Not specified"
+                    })
+                    entities['medications'].append(name)
+                    logger.info(f"  ✅ Added medication: {name} ({purpose}, {dosage})")
+    
+    # =========================================================================
+    # UNIVERSAL SURGERY PARSER - FIXED
+    # =========================================================================
+    
+    def _parse_surgeries_universal(self, surgery_text: str, entities: dict) -> None:
+        """Parse surgeries from ANY format - IMPROVED."""
+        # Clean the text
+        surgery_text = re.sub(r'\s+', ' ', surgery_text).strip()
+        
+        # Split by bullet points
+        surgeries = self._split_items(surgery_text)
+        
+        for surgery in surgeries:
+            if not surgery or len(surgery) < 5:
                 continue
-
-            # YEAR line: "YEAR 2024" or just "2024"
-            year_m = re.match(r'^(?:YEAR\s+)?(\d{4})$', stripped)
-            if year_m:
-                current_year = year_m.group(1)
+            
+            # Extract name - stop at "Date:" or "Hospital:"
+            name = surgery.split('Date:')[0].strip() if 'Date:' in surgery else surgery
+            name = name.split('Hospital:')[0].strip()
+            name = re.sub(r'^[«»]+', '', name).strip()
+            
+            # Remove any trailing special characters
+            name = re.sub(r'\s+$', '', name)
+            
+            if not name or name.upper() == 'NA' or len(name) < 3:
                 continue
-
-            # Month line: "March" alone
-            if stripped.lower() in month_names:
-                current_month = stripped.capitalize()
+            
+            key = name.lower()
+            if key not in self.seen_items['pastSurgeries']:
+                self.seen_items['pastSurgeries'].add(key)
+                
+                surgery_obj = {
+                    'name': name,
+                    'date': 'NA',
+                    'hospital': 'NA',
+                    'surgeon': 'NA'
+                }
+                
+                # Extract date
+                date_match = re.search(r'Date:\s*([^,\n]+?)(?:\s+Hospital:|$)', surgery, re.IGNORECASE)
+                if date_match:
+                    surgery_obj['date'] = date_match.group(1).strip()
+                
+                # Extract hospital
+                hospital_match = re.search(r'Hospital:\s*([^,\n]+?)(?:\s+Surgeon:|$)', surgery, re.IGNORECASE)
+                if hospital_match:
+                    hospital = hospital_match.group(1).strip()
+                    surgery_obj['hospital'] = hospital
+                    if hospital not in self.seen_items['hospitals']:
+                        self.seen_items['hospitals'].add(hospital)
+                        entities['hospitals'].append(hospital)
+                
+                # Extract surgeon
+                surgeon_match = re.search(r'Surgeon:\s*([^,\n]+)', surgery, re.IGNORECASE)
+                if surgeon_match:
+                    surgeon = surgeon_match.group(1).strip()
+                    surgery_obj['surgeon'] = surgeon
+                    if surgeon not in self.seen_items['doctors']:
+                        self.seen_items['doctors'].add(surgeon)
+                        entities['doctors'].append(surgeon)
+                
+                entities['pastSurgeries'].append(surgery_obj)
+                logger.info(f"  ✅ Found surgery: {name}")
+    
+    # =========================================================================
+    # UNIVERSAL MAJOR ILLNESS PARSER - FIXED
+    # =========================================================================
+    
+    def _parse_major_illnesses_universal(self, illness_text: str, entities: dict) -> None:
+        """Parse major illnesses from ANY format - IMPROVED."""
+        illness_text = re.sub(r'\s+', ' ', illness_text).strip()
+        illnesses = self._split_items(illness_text)
+        
+        for illness in illnesses:
+            if not illness or len(illness) < 5:
                 continue
-
-            # Record line: "15 March – CONSULTATION ..."  or "• 15 March – ..."
-            record_m = re.match(
-                r'^[•\-\*]?\s*(\d{1,2})\s+([A-Za-z]+)\s*[–\-]\s*([A-Z\s]+?)\s+(.*)',
-                stripped
-            )
-            if record_m and current_year:
-                history.append({
-                    'year': current_year,
-                    'month': record_m.group(2).capitalize(),
-                    'day': int(record_m.group(1)),
-                    'type': record_m.group(3).strip(),
-                    'description': record_m.group(4).strip()
+            
+            # Extract name
+            name = illness.split('Date:')[0].strip()
+            name = name.split('Hospital:')[0].strip()
+            name = re.sub(r'^[«»]+', '', name).strip()
+            
+            if not name or name.upper() == 'NA' or len(name) < 3:
+                continue
+            
+            key = name.lower()
+            if key not in self.seen_items['majorIllnesses']:
+                self.seen_items['majorIllnesses'].add(key)
+                
+                illness_obj = {
+                    'name': name,
+                    'date': 'NA',
+                    'hospital': 'NA',
+                    'notes': 'NA'
+                }
+                
+                # Extract date
+                date_match = re.search(r'Date:\s*([^,\n]+?)(?:\s+Hospital:|$)', illness, re.IGNORECASE)
+                if date_match:
+                    illness_obj['date'] = date_match.group(1).strip()
+                
+                # Extract hospital
+                hospital_match = re.search(r'Hospital:\s*([^,\n]+?)(?:\s+Notes:|$)', illness, re.IGNORECASE)
+                if hospital_match:
+                    hospital = hospital_match.group(1).strip()
+                    illness_obj['hospital'] = hospital
+                    if hospital not in self.seen_items['hospitals']:
+                        self.seen_items['hospitals'].add(hospital)
+                        entities['hospitals'].append(hospital)
+                
+                # Extract notes
+                notes_match = re.search(r'Notes:\s*([^,\n]+)', illness, re.IGNORECASE)
+                if notes_match:
+                    illness_obj['notes'] = notes_match.group(1).strip()
+                
+                entities['majorIllnesses'].append(illness_obj)
+                logger.info(f"  ✅ Found major illness: {name}")
+    
+    # =========================================================================
+    # UNIVERSAL INTERVENTION PARSER - FIXED
+    # =========================================================================
+    
+    def _parse_interventions_universal(self, iv_text: str, entities: dict) -> None:
+        """Parse interventions from ANY format - IMPROVED."""
+        iv_text = re.sub(r'\s+', ' ', iv_text).strip()
+        interventions = self._split_items(iv_text)
+        
+        for iv in interventions:
+            if not iv or len(iv) < 3:
+                continue
+            
+            # Extract name
+            name = iv.split('Date:')[0].strip()
+            name = re.sub(r'^[=•*]+', '', name).strip()
+            
+            if not name or name.upper() == 'NA' or len(name) < 3:
+                continue
+            
+            key = name.lower()
+            if key not in self.seen_items['interventions']:
+                self.seen_items['interventions'].add(key)
+                
+                iv_obj = {
+                    'name': name,
+                    'date': 'NA',
+                    'hospital': 'NA'
+                }
+                
+                # Extract date
+                date_match = re.search(r'Date:\s*([^,\n]+?)(?:\s+Hospital:|$)', iv, re.IGNORECASE)
+                if date_match:
+                    iv_obj['date'] = date_match.group(1).strip()
+                
+                # Extract hospital
+                hospital_match = re.search(r'Hospital:\s*([^,\n]+)', iv, re.IGNORECASE)
+                if hospital_match:
+                    hospital = hospital_match.group(1).strip()
+                    iv_obj['hospital'] = hospital
+                    if hospital not in self.seen_items['hospitals']:
+                        self.seen_items['hospitals'].add(hospital)
+                        entities['hospitals'].append(hospital)
+                
+                entities['interventions'].append(iv_obj)
+                logger.info(f"  ✅ Found intervention: {name}")
+    
+    # =========================================================================
+    # UNIVERSAL BLOOD THINNER PARSER
+    # =========================================================================
+    
+    def _parse_blood_thinner_universal(self, bt_text: str, entities: dict) -> None:
+        """Parse blood thinners from ANY format."""
+        if 'none' in bt_text.lower():
+            return
+        
+        bt_text = re.sub(r'\s+', ' ', bt_text).strip()
+        bt_items = self._split_items(bt_text)
+        
+        for bt in bt_items:
+            if not bt or len(bt) < 3 or bt.upper() == 'NONE':
+                continue
+            
+            name = bt
+            bt_type = 'NA'
+            duration = 'NA'
+            reason = 'NA'
+            
+            # Parse "Name (Type)"
+            match = re.match(r'^(.+?)\s*\(([^)]+)\)', bt)
+            if match:
+                name = match.group(1).strip()
+                bt_type = match.group(2).strip()
+            
+            # Look for duration and reason
+            duration_match = re.search(r'Duration:\s*([^,\n]+)', bt, re.IGNORECASE)
+            if duration_match:
+                duration = duration_match.group(1).strip()
+            
+            reason_match = re.search(r'Reason:\s*([^,\n]+)', bt, re.IGNORECASE)
+            if reason_match:
+                reason = reason_match.group(1).strip()
+            
+            key = name.lower()
+            if key not in self.seen_items['bloodThinner']:
+                self.seen_items['bloodThinner'].add(key)
+                entities['bloodThinner'].append({
+                    'name': name,
+                    'type': bt_type,
+                    'duration': duration,
+                    'reason': reason
                 })
-
-        return history
-
-    # ------------------------------------------------------------------
-    # VITALS
-    # ------------------------------------------------------------------
-    def _extract_vitals(self, text: str) -> Dict[str, str]:
-        vitals = {}
-        patterns = {
-            'bp':     r'(\d{2,3})\s*/\s*(\d{2,3})\s*(?:mm\s*Hg)?',
-            'hr':     r'(?:HR|heart rate|pulse)[:\s]*(\d{2,3})\s*(?:bpm)?',
-            'temp':   r'(?:temp|temperature)[:\s]*(\d{2,3}(?:\.\d)?)\s*(?:°?[FC]?)',
-            'weight': r'(?:wt|weight)[:\s]*(\d+(?:\.\d)?)\s*(?:kg|lbs?)',
-            'height': r'(?:ht|height)[:\s]*(\d+(?:\.\d)?)\s*(?:cm|m|in)'
-        }
-        for key, pattern in patterns.items():
-            m = re.search(pattern, text, re.IGNORECASE)
-            if m:
-                vitals[key] = m.group(0)
-        return vitals
-
-    # ------------------------------------------------------------------
-    # EMPTY RESULT
-    # ------------------------------------------------------------------
-    def _empty_result(self) -> Dict:
+                logger.info(f"  ✅ Found blood thinner: {name}")
+    
+    # =========================================================================
+    # DIAGNOSES FALLBACK
+    # =========================================================================
+    
+    def _extract_diagnoses_fallback(self, text: str, entities: dict) -> None:
+        """Extract diagnoses from various patterns."""
+        patterns = [
+            (r'Diabetes Type:\s*([^\n]+)', None),
+            (r'Type\s*2\s*Diabetes', 'Type 2 Diabetes'),
+            (r'Hypertension', 'Hypertension'),
+            (r'High Cholesterol', 'High Cholesterol'),
+            (r'Rheumatoid Arthritis', 'Rheumatoid Arthritis'),
+            (r'Ankylosing Spondylitis', 'Ankylosing Spondylitis'),
+            (r'GERD\s*\([^)]+\)', 'GERD'),
+        ]
+        
+        for pattern, value in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                diag = value if value else (match.strip() if isinstance(match, str) else match[0].strip())
+                if diag and diag.upper() != 'NA' and diag.lower() not in self.seen_items['diagnoses']:
+                    self.seen_items['diagnoses'].add(diag.lower())
+                    entities['diagnoses'].append(diag)
+    
+    # =========================================================================
+    # CLEAN ENTITIES
+    # =========================================================================
+    
+    def _clean_entities(self, entities: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean extracted entities."""
+        cleaned = {}
+        for key, value in entities.items():
+            if isinstance(value, list):
+                cleaned_list = []
+                for item in value:
+                    if isinstance(item, dict):
+                        name_val = item.get('name', '')
+                        if name_val and str(name_val).upper() != 'NA' and len(name_val) > 1:
+                            cleaned_list.append(item)
+                        elif 'name' not in item and item:
+                            cleaned_list.append(item)
+                    elif item and (not isinstance(item, str) or item.upper() != 'NA'):
+                        cleaned_list.append(item)
+                cleaned[key] = cleaned_list
+            elif isinstance(value, dict):
+                cleaned[key] = value
+            else:
+                cleaned[key] = value
+        return cleaned
+    
+    def _empty_result(self) -> Dict[str, Any]:
         return {
-            'demographics':      {},
-            'address':           'NA',
-            'allergies':         [],
-            'comorbidConditions':[],
-            'chronicDiseases':   [],
-            'medications':       [],
-            'pastSurgeries':     [],
-            'majorIllnesses':    [],
-            'interventions':     [],
-            'bloodThinner':      [],
-            'emergencyContact':  {},
-            'medicalHistory':    [],
-            'diagnoses':         [],
-            'lab_results':       [],
-            'dates':             [],
-            'doctors':           [],
-            'hospitals':         [],
-            'vitals':            {}
+            'diagnoses': [],
+            'medications': [],
+            'lab_results': [],
+            'allergies': [],
+            'dates': [],
+            'doctors': [],
+            'hospitals': [],
+            'vitals': {},
+            'pastSurgeries': [],
+            'majorIllnesses': [],
+            'interventions': [],
+            'bloodThinner': [],
+            'emergencyContact': {},
+            'medicalHistory': [],
+            'comorbidConditions': [],
+            'chronicDiseases': [],
+            'currentMedications': []
         }

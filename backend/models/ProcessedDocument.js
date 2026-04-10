@@ -7,6 +7,23 @@ const medicationSchema = new mongoose.Schema({
     dosage: { type: String, default: 'NA' }
 }, { _id: false });
 
+// Define allergy sub-schema (to match Python output)
+const allergySchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    reaction: { type: String, default: '' },
+    severity: { type: String, enum: ['Mild', 'Moderate', 'Severe'], default: 'Moderate' }
+}, { _id: false });
+
+// Define blood thinner sub-schema (FIXED)
+const bloodThinnerSchema = new mongoose.Schema({
+    name: { type: String, default: 'NA' },
+    type: { type: String, default: 'NA' },
+    duration: { type: String, default: 'NA' },
+    reason: { type: String, default: 'NA' },
+    startDate: { type: String, default: '' },
+    endDate: { type: String, default: '' }
+}, { _id: false });
+
 const processedDocumentSchema = new mongoose.Schema({
     fileId: {
         type: String,
@@ -44,10 +61,7 @@ const processedDocumentSchema = new mongoose.Schema({
         type: String,
         default: []
     }],
-    allergies: [{
-        type: String,
-        default: []
-    }],
+    allergies: [allergySchema],
     dates: [{
         text: String,
         normalized: String,
@@ -62,7 +76,50 @@ const processedDocumentSchema = new mongoose.Schema({
         default: []
     }],
 
-    // SLM Generated Summaries - Changed to Mixed type to accept objects
+    // Structured fields from new extractor
+    comorbidConditions: [allergySchema],
+    chronicDiseases: [allergySchema],
+    pastSurgeries: [{
+        name: String,
+        date: String,
+        hospital: String,
+        surgeon: String,
+        indication: String,
+        _id: false
+    }],
+    majorIllnesses: [{
+        name: String,
+        date: String,
+        hospital: String,
+        notes: String,
+        _id: false
+    }],
+    interventions: [{
+        name: String,
+        date: String,
+        hospital: String,
+        outcome: String,
+        _id: false
+    }],
+    // FIXED: bloodThinner now uses proper sub-schema
+    bloodThinner: [bloodThinnerSchema],
+    emergencyContact: {
+        name: String,
+        relationship: String,
+        phone: String,
+        alternatePhone: String,
+        _id: false
+    },
+    parsedMedicalHistory: [{
+        year: String,
+        month: String,
+        day: Number,
+        type: String,
+        description: String,
+        _id: false
+    }],
+
+    // SLM Generated Summaries - Mixed type to accept objects
     slmSummaries: {
         general: { type: mongoose.Schema.Types.Mixed, default: null },
         cardiology: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -125,6 +182,7 @@ const processedDocumentSchema = new mongoose.Schema({
 // Pre-save middleware to ensure medications are properly formatted
 processedDocumentSchema.pre('save', function (next) {
     try {
+        // Fix medications
         if (!Array.isArray(this.medications)) {
             this.medications = [];
         }
@@ -151,15 +209,105 @@ processedDocumentSchema.pre('save', function (next) {
             };
         });
 
+        // Fix allergies
+        if (!Array.isArray(this.allergies)) {
+            this.allergies = [];
+        }
+
+        this.allergies = this.allergies.map(allergy => {
+            if (allergy && typeof allergy === 'object') {
+                return {
+                    name: allergy.name || 'Unknown Allergy',
+                    reaction: allergy.reaction || '',
+                    severity: allergy.severity || 'Moderate'
+                };
+            }
+            if (typeof allergy === 'string') {
+                return {
+                    name: allergy,
+                    reaction: '',
+                    severity: 'Moderate'
+                };
+            }
+            return {
+                name: 'Unknown Allergy',
+                reaction: '',
+                severity: 'Moderate'
+            };
+        });
+
+        // FIXED: Ensure bloodThinner is properly formatted as array of objects
+        if (!Array.isArray(this.bloodThinner)) {
+            this.bloodThinner = [];
+        }
+
+        this.bloodThinner = this.bloodThinner.map(bt => {
+            // If bt is already an object, ensure it has the right structure
+            if (bt && typeof bt === 'object') {
+                return {
+                    name: bt.name || bt.medication_name || 'NA',
+                    type: bt.type || 'NA',
+                    duration: bt.duration || 'NA',
+                    reason: bt.reason || 'NA',
+                    startDate: bt.startDate || '',
+                    endDate: bt.endDate || ''
+                };
+            }
+            // If bt is a string, create a proper object
+            if (typeof bt === 'string') {
+                return {
+                    name: bt,
+                    type: 'NA',
+                    duration: 'NA',
+                    reason: 'NA',
+                    startDate: '',
+                    endDate: ''
+                };
+            }
+            // Default case
+            return {
+                name: 'NA',
+                type: 'NA',
+                duration: 'NA',
+                reason: 'NA',
+                startDate: '',
+                endDate: ''
+            };
+        });
+
+        // Fix comorbidConditions and chronicDiseases
+        const fixConditionArray = (arr) => {
+            if (!Array.isArray(arr)) return [];
+            return arr.map(item => {
+                if (item && typeof item === 'object') {
+                    return { name: item.name || 'Unknown' };
+                }
+                if (typeof item === 'string') {
+                    return { name: item };
+                }
+                return { name: 'Unknown' };
+            });
+        };
+
+        this.comorbidConditions = fixConditionArray(this.comorbidConditions);
+        this.chronicDiseases = fixConditionArray(this.chronicDiseases);
+
         next();
     } catch (error) {
+        console.error('Pre-save error:', error);
         next(error);
     }
 });
 
+// Pre-validate middleware for debugging
 processedDocumentSchema.pre('validate', function (next) {
     if (this.medications && this.medications.length > 0) {
         console.log(`📊 Pre-validate: Processing ${this.medications.length} medications`);
+    }
+    if (this.bloodThinner && this.bloodThinner.length > 0) {
+        console.log(`📊 Pre-validate: Processing ${this.bloodThinner.length} blood thinners`);
+        // Log first blood thinner for debugging
+        console.log(`📊 First blood thinner:`, JSON.stringify(this.bloodThinner[0]));
     }
     next();
 });
@@ -183,6 +331,17 @@ processedDocumentSchema.set('toJSON', {
                 name: med.name,
                 purpose: med.purpose,
                 dosage: med.dosage
+            }));
+        }
+        if (ret.allergies) {
+            ret.allergies = ret.allergies.map(a => ({ name: a.name, reaction: a.reaction, severity: a.severity }));
+        }
+        if (ret.bloodThinner) {
+            ret.bloodThinner = ret.bloodThinner.map(bt => ({
+                name: bt.name,
+                type: bt.type,
+                duration: bt.duration,
+                reason: bt.reason
             }));
         }
         return ret;

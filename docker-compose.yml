@@ -1,20 +1,14 @@
-services:
+version: '3.8'
 
-  backend:
-    build: ./backend
-    container_name: seharoop_backend
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: seharoop_mongodb
     ports:
-      - "5001:5001"
+      - "27017:27017"
     volumes:
-      - ./backend:/app
-      - /app/node_modules   # ✅ Prevent node_modules overwrite
-    depends_on:
-      - python-service
-      - slm-service
-    environment:
-      - PYTHON_SERVICE_URL=http://python-service:8000
-      - SLM_SERVICE_URL=http://slm-service:8001
-    command: npm run dev
+      - mongodb_data:/data/db
+    restart: unless-stopped
 
   python-service:
     build: ./backend/python-service
@@ -23,7 +17,10 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/python-service:/app
+    environment:
+      - PORT=8000
     command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
 
   slm-service:
     build: ./backend/slm-service
@@ -32,5 +29,58 @@ services:
       - "8001:8001"
     volumes:
       - ./backend/slm-service:/app
-      - ./backend/slm-service/models:/app/models   # ✅ Ensure model is available
+      - slm_models:/app/models
+    environment:
+      - PORT=8001
+      - MODEL_PATH=/app/models/medical-slm.gguf
     command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  backend:
+    build: ./backend
+    container_name: seharoop_backend
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      - mongodb
+      - python-service
+      - slm-service
+    environment:
+      - NODE_ENV=development
+      - MONGO_URI=mongodb://mongodb:27017/medrecord
+      - JWT_SECRET=your-super-secret-key-change-this
+      - PYTHON_SERVICE_URL=http://python-service:8000
+      - SLM_SERVICE_URL=http://slm-service:8001
+    command: npm run dev
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    container_name: seharoop_worker
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      - mongodb
+      - python-service
+      - slm-service
+    environment:
+      - NODE_ENV=development
+      - MONGO_URI=mongodb://mongodb:27017/medrecord
+      - JWT_SECRET=your-super-secret-key-change-this
+      - PYTHON_SERVICE_URL=http://python-service:8000
+      - SLM_SERVICE_URL=http://slm-service:8001
+    command: npm run worker
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  slm_models:
