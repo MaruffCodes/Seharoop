@@ -67,7 +67,7 @@
 //       if (response.success && response.data) {
 //         // Immediately sync API service state to prevent race conditions
 //         ApiService.setToken(response.data.token);
-        
+
 //         // Store token and user data via auth context
 //         await login(
 //           response.data.token,
@@ -391,6 +391,7 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const router = useRouter();
 
+  // In login.tsx, change the handleLogin function to remove the Alert after login
   const handleLogin = async () => {
     const sanitized = email.trim().toLowerCase();
     if (!sanitized || !password) { Alert.alert('Missing Fields', 'Please fill in all fields.'); return; }
@@ -404,13 +405,15 @@ export default function LoginScreen() {
       if (response.success && response.data) {
         ApiService.setToken(response.data.token);
         await login(response.data.token, userType, response.data.user);
-        Alert.alert('Welcome back', `Signed in as ${response.data.user.name || userType}.`);
+        // REMOVED the Alert here - login function handles navigation
       } else {
         Alert.alert('Sign In Failed', response.message || 'Invalid credentials.');
+        setIsLoading(false);
       }
     } catch (error: any) {
       Alert.alert('Error', error.message?.includes('401') ? 'Incorrect email or password.' : 'Connection error. Try again.');
-    } finally { setIsLoading(false); }
+      setIsLoading(false);
+    }
   };
 
   return (

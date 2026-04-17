@@ -5,7 +5,7 @@ const Doctor = require('../models/Doctor');
 const auth = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
+
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -14,7 +14,7 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     let user;
     if (decoded.role === 'patient') {
       user = await User.findById(decoded.id);

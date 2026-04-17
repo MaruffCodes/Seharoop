@@ -2597,93 +2597,1047 @@
 //   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary },
 // });
 
+// import React, { useState, useEffect, useCallback, JSX } from 'react';
+// import {
+//   View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView,
+//   Image, ImageSourcePropType, Modal, ActivityIndicator,
+//   RefreshControl,
+// } from 'react-native';
+// import { SafeAreaView } from 'react-native-safe-area-context';
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { useFocusEffect } from '@react-navigation/native';
+// import { useRouter } from 'expo-router';
+// import {
+//   FileText, LogOut, QrCode, Activity, Clock, ChevronRight,
+//   X, Eye, Bell, ShieldAlert, Stethoscope, Upload,
+//   FlaskConical, FilePlus, Trash2,
+// } from 'lucide-react-native';
+// import * as DocumentPicker from 'expo-document-picker';
+// import { File, Paths } from 'expo-file-system';
+// import * as Sharing from 'expo-sharing';
+// import ApiService, { BASE_URL } from '../../services/api';
+// import { useAuth } from '../../contexts/AuthContext';
+
+// // ── Tokens ────────────────────────────────────────────────────────────────────
+// const C = {
+//   bg: '#F3F6FD',
+//   surface: '#FFFFFF',
+//   primary: '#1A56DB',
+//   primaryLight: '#EBF2FF',
+//   textDark: '#0D1B3E',
+//   textMid: '#4A5A7A',
+//   textLight: '#9AAABE',
+//   border: '#DDE4F5',
+//   success: '#059669',
+//   successLight: '#ECFDF5',
+//   danger: '#DC2626',
+//   dangerLight: '#FEF2F2',
+//   warning: '#D97706',
+//   warningLight: '#FFFBEB',
+//   purple: '#7C3AED',
+//   purpleLight: '#EDE9FE',
+// };
+
+// // ── Types ─────────────────────────────────────────────────────────────────────
+// interface UserData {
+//   name: string; email: string; patientId: string;
+//   qrCode?: string; bloodGroup?: string;
+// }
+// interface DocItem {
+//   id: string; fileId: string; name: string; type: string;
+//   size: number; status: string; uploadDate: string; fileUrl: string;
+//   summary: string;
+//   extractedData?: { diagnoses: string[]; medications: string[]; allergies: string[] };
+// }
+// interface ReportItem {
+//   id: string; fileId: string; fileName: string; fileType: string;
+//   fileSize: number; reportCategory: string; uploadedAt: string;
+//   fileUrl: string; notes: string;
+// }
+// interface DoctorView { doctorName: string; specialization: string; viewedAt: string; }
+// interface AppNotification { _id: string; message: string; createdAt: string; read: boolean; }
+
+// const ALLOWED_TYPES = [
+//   'application/pdf', 'text/plain',
+//   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+//   'application/msword', 'image/jpeg', 'image/png', 'image/jpg',
+// ];
+
+// const fileEmoji = (type: string) => {
+//   if (!type) return '📎';
+//   if (type.startsWith('image/')) return '🖼️';
+//   if (type.includes('pdf')) return '📄';
+//   if (type.includes('word') || type.includes('docx')) return '📝';
+//   return '📎';
+// };
+
+// const categoryColor = (cat: string) => {
+//   switch (cat) {
+//     case 'KFT': return { bg: '#EFF6FF', text: '#1D4ED8' };
+//     case 'LFT': return { bg: '#ECFDF5', text: '#065F46' };
+//     case 'CBC': return { bg: '#FFF7ED', text: '#C2410C' };
+//     case 'Lipid Profile': return { bg: '#FDF4FF', text: '#7E22CE' };
+//     case 'Thyroid': return { bg: '#FFF1F2', text: '#BE123C' };
+//     case 'Blood Sugar': return { bg: '#FFFBEB', text: '#92400E' };
+//     default: return { bg: '#F1F5F9', text: '#475569' };
+//   }
+// };
+
+// // ─────────────────────────────────────────────────────────────────────────────
+
+// export default function PatientDashboard(): JSX.Element {
+//   const [userData, setUserData] = useState<UserData | null>(null);
+//   const [documents, setDocuments] = useState<DocItem[]>([]);
+//   const [reports, setReports] = useState<ReportItem[]>([]);
+//   const [viewCount, setViewCount] = useState(0);
+//   const [viewHistory, setViewHistory] = useState<DoctorView[]>([]);
+//   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+//   const [loading, setLoading] = useState(false);
+//   const [uploading, setUploading] = useState<'doc' | 'report' | null>(null);
+//   const [refreshing, setRefreshing] = useState(false);
+
+//   // selected items for detail modals
+//   const [selDoc, setSelDoc] = useState<DocItem | null>(null);
+//   const [selReport, setSelReport] = useState<ReportItem | null>(null);
+//   const [openingFile, setOpeningFile] = useState(false);
+
+//   // modal visibility
+//   const [showDocs, setShowDocs] = useState(false);
+//   const [showDocDetail, setShowDocDetail] = useState(false);
+//   const [showReports, setShowReports] = useState(false);
+//   const [showReportDetail, setShowReportDetail] = useState(false);
+//   const [showViews, setShowViews] = useState(false);
+//   const [showNotifs, setShowNotifs] = useState(false);
+
+//   const router = useRouter();
+
+//   useEffect(() => { bootstrap(); }, []);
+
+//   useFocusEffect(useCallback(() => {
+//     loadNotifications();
+//     loadViewHistory();
+//   }, []));
+
+//   // Poll stats every 30s so processing doc count stays fresh
+//   useEffect(() => {
+//     const id = setInterval(loadDocuments, 30000);
+//     return () => clearInterval(id);
+//   }, []);
+
+//   async function bootstrap() {
+//     setLoading(true);
+//     try {
+//       await Promise.all([loadUserData(), loadDocuments(), loadReports(), loadViewHistory(), loadNotifications()]);
+//     } finally {
+//       setLoading(false);
+//     }
+//   }
+
+//   async function loadUserData() {
+//     try {
+//       const stored = await AsyncStorage.getItem('userData');
+//       if (stored) setUserData(JSON.parse(stored));
+//       const res = await ApiService.getPatientProfile() as any;
+//       if (res.success) {
+//         setUserData(res.data);
+//         await AsyncStorage.setItem('userData', JSON.stringify(res.data));
+//       }
+//     } catch { }
+//   }
+
+//   async function loadDocuments() {
+//     try {
+//       const res = await ApiService.getMyDocuments() as any;
+//       if (res.success && Array.isArray(res.data)) setDocuments(res.data);
+//     } catch { }
+//   }
+
+//   async function loadReports() {
+//     try {
+//       const res = await ApiService.getMyReports() as any;
+//       if (res.success && Array.isArray(res.data)) setReports(res.data);
+//     } catch { }
+//   }
+
+//   async function loadViewHistory() {
+//     try {
+//       const res = await ApiService.getViewHistory() as any;
+//       if (res.success) {
+//         setViewCount(res.data?.viewCount || 0);
+//         setViewHistory(res.data?.viewHistory || []);
+//       }
+//     } catch { }
+//   }
+
+//   async function loadNotifications() {
+//     try {
+//       const res = await ApiService.getPatientNotifications();
+//       if (res.success && res.data) setNotifications(res.data as any);
+//     } catch { }
+//   }
+
+//   const onRefresh = async () => {
+//     setRefreshing(true);
+//     await bootstrap();
+//     setRefreshing(false);
+//   };
+
+//   // ── File picker & upload ──────────────────────────────────────────────────────
+
+//   const pickAndUploadDocument = async () => {
+//     try {
+//       const res = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
+//       if (res.canceled || !res.assets?.[0]) return;
+//       const d = res.assets[0];
+//       setUploading('doc');
+//       // Optimistic count bump
+//       setDocuments(prev => [{
+//         id: `temp-${Date.now()}`, fileId: '', name: d.name, type: d.mimeType || 'application/octet-stream',
+//         size: d.size || 0, status: 'processing', uploadDate: new Date().toISOString(),
+//         fileUrl: '', summary: '',
+//       }, ...prev]);
+//       const uploadRes = await ApiService.uploadFile({ uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size });
+//       if (uploadRes.success) {
+//         Alert.alert('Uploaded ✓', 'Document queued for processing. Summary will update shortly.');
+//         setTimeout(() => { loadDocuments(); try { ApiService.refreshAllSummaries(); } catch { } }, 4000);
+//       } else {
+//         setDocuments(prev => prev.filter(x => !x.id.startsWith('temp-')));
+//         Alert.alert('Error', uploadRes.message || 'Failed to upload document');
+//       }
+//     } catch (e: any) {
+//       setDocuments(prev => prev.filter(x => !x.id.startsWith('temp-')));
+//       Alert.alert('Error', e.message || 'Failed to upload document');
+//     } finally { setUploading(null); }
+//   };
+
+//   const pickAndUploadReport = async () => {
+//     try {
+//       const res = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
+//       if (res.canceled || !res.assets?.[0]) return;
+//       const d = res.assets[0];
+//       setUploading('report');
+//       const uploadRes = await ApiService.uploadReport(
+//         { uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size }
+//       );
+//       if (uploadRes.success) {
+//         Alert.alert('Uploaded ✓', 'Lab report saved successfully.');
+//         await loadReports();
+//       } else {
+//         Alert.alert('Error', uploadRes.message || 'Failed to upload report');
+//       }
+//     } catch (e: any) {
+//       Alert.alert('Error', e.message || 'Failed to upload report');
+//     } finally { setUploading(null); }
+//   };
+
+//   // ── File viewer using NEW FileSystem API ───────────────────────────────────────
+
+//   const openFile = async (url: string, fileId?: string, fileType?: string, fileName?: string) => {
+//     if (!url) { Alert.alert('Not available', 'This file is still being processed.'); return; }
+
+//     // Replace localhost with real LAN IP — critical for Expo Go on real device
+//     let fixedUrl = url;
+//     try {
+//       const lanHost = new URL(BASE_URL).hostname;
+//       fixedUrl = url.replace('localhost', lanHost).replace('127.0.0.1', lanHost);
+//     } catch { }
+
+//     setOpeningFile(true);
+//     try {
+//       const safeId = fileId || url.split('/').pop() || `file_${Date.now()}`;
+//       const ext = (fileType?.includes('pdf') || url.endsWith('.pdf')) ? '.pdf'
+//         : (fileType?.startsWith('image/jpeg') || url.endsWith('.jpg')) ? '.jpg'
+//           : (fileType?.startsWith('image/png') || url.endsWith('.png')) ? '.png'
+//             : (fileType?.includes('word') || url.endsWith('.docx')) ? '.docx'
+//               : '.pdf';
+
+//       // Create a File object using the new API
+//       const localFile = new File(Paths.cache, `seharoop_${safeId}${ext}`);
+
+//       // Check if already cached using the new API
+//       if (!localFile.exists) {
+//         const token = await ApiService.getToken();
+
+//         // Download using the new File.downloadFileAsync API
+//         const downloadedFile = await File.downloadFileAsync(fixedUrl, localFile, {
+//           headers: token ? { Authorization: `Bearer ${token}` } : {},
+//           idempotent: true, // Overwrite if exists
+//         });
+
+//         if (!downloadedFile.exists) {
+//           Alert.alert('Download Error', 'Failed to download the file. Make sure the backend is running and accessible.');
+//           return;
+//         }
+//       }
+
+//       const canShare = await Sharing.isAvailableAsync();
+//       if (!canShare) { Alert.alert('Not supported', 'File sharing is not available on this device.'); return; }
+
+//       await Sharing.shareAsync(localFile.uri, {
+//         mimeType: fileType || 'application/octet-stream',
+//         dialogTitle: fileName || 'Open File',
+//         UTI: fileType?.includes('pdf') ? 'com.adobe.pdf' : undefined,
+//       });
+//     } catch (err: any) {
+//       console.error('openFile error:', err);
+//       Alert.alert('Cannot open file', err.message || 'An unexpected error occurred.');
+//     } finally {
+//       setOpeningFile(false);
+//     }
+//   };
+
+//   const handleDeleteReport = async (report: ReportItem) => {
+//     Alert.alert('Delete Report', `Delete "${report.fileName}"?`, [
+//       { text: 'Cancel', style: 'cancel' },
+//       {
+//         text: 'Delete', style: 'destructive', onPress: async () => {
+//           try {
+//             await ApiService.deleteReport(report.id);
+//             setReports(prev => prev.filter(r => r.id !== report.id));
+//             setShowReportDetail(false);
+//           } catch (e: any) { Alert.alert('Error', e.message); }
+//         }
+//       },
+//     ]);
+//   };
+
+//   const handleLogout = () => {
+//     Alert.alert('Sign Out', 'Are you sure?', [
+//       { text: 'Cancel', style: 'cancel' },
+//       {
+//         text: 'Sign Out', style: 'destructive', onPress: async () => {
+//           try { await ApiService.logout(); } catch { Alert.alert('Error', 'Failed to sign out'); }
+//         }
+//       },
+//     ]);
+//   };
+
+//   const unreadCount = notifications.filter(n => !n.read).length;
+//   const initials = userData?.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || 'P';
+
+//   // ── Render ────────────────────────────────────────────────────────────────────
+
+//   return (
+//     <SafeAreaView style={s.root}>
+//       <ScrollView
+//         contentContainerStyle={s.scroll}
+//         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
+//         showsVerticalScrollIndicator={false}
+//       >
+
+//         {/* ── Header ── */}
+//         <View style={s.header}>
+//           <View style={s.headerRow}>
+//             <View style={s.avatarRow}>
+//               <View style={s.avatar}><Text style={s.avatarTxt}>{initials}</Text></View>
+//               <View style={{ flex: 1 }}>
+//                 <Text style={s.greeting}>Hello, welcome back</Text>
+//                 <Text style={s.name} numberOfLines={1}>{userData?.name || 'Patient'}</Text>
+//                 <View style={s.idBadge}>
+//                   <Text style={s.idText}>ID: {userData?.patientId || '—'}</Text>
+//                   {userData?.bloodGroup && (
+//                     <><View style={s.bloodDot} /><Text style={s.bloodText}>{userData.bloodGroup}ve</Text></>
+//                   )}
+//                 </View>
+//               </View>
+//             </View>
+//             <View style={s.headerActions}>
+//               <TouchableOpacity style={s.iconBtn} onPress={() => setShowNotifs(true)}>
+//                 <Bell size={18} color={C.primary} strokeWidth={2} />
+//                 {unreadCount > 0 && (
+//                   <View style={s.badge}><Text style={s.badgeTxt}>{unreadCount}</Text></View>
+//                 )}
+//               </TouchableOpacity>
+//               <TouchableOpacity style={[s.iconBtn, s.iconBtnDanger]} onPress={handleLogout}>
+//                 <LogOut size={18} color={C.danger} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//           </View>
+//         </View>
+
+//         {/* ── Stats row ── */}
+//         <View style={s.statsRow}>
+//           {/* Documents */}
+//           <TouchableOpacity style={s.statCard} onPress={() => setShowDocs(true)} activeOpacity={0.8}>
+//             <View style={[s.statIcon, { backgroundColor: C.primaryLight }]}>
+//               <FileText size={18} color={C.primary} strokeWidth={2} />
+//             </View>
+//             <Text style={s.statVal}>{documents.length}</Text>
+//             <Text style={s.statLabel}>Documents</Text>
+//             {documents.length > 0 && <Text style={s.statHint}>Tap to view</Text>}
+//           </TouchableOpacity>
+
+//           {/* Dr Views */}
+//           <TouchableOpacity style={s.statCard} onPress={() => setShowViews(true)} activeOpacity={0.8}>
+//             <View style={[s.statIcon, { backgroundColor: C.successLight }]}>
+//               <Stethoscope size={18} color={C.success} strokeWidth={2} />
+//             </View>
+//             <Text style={s.statVal}>{viewCount}</Text>
+//             <Text style={s.statLabel}>Dr. Views</Text>
+//             {viewCount > 0 && <Text style={s.statHint}>Tap to see</Text>}
+//           </TouchableOpacity>
+
+//           {/* Reports */}
+//           <TouchableOpacity style={s.statCard} onPress={() => setShowReports(true)} activeOpacity={0.8}>
+//             <View style={[s.statIcon, { backgroundColor: C.warningLight }]}>
+//               <FlaskConical size={18} color={C.warning} strokeWidth={2} />
+//             </View>
+//             <Text style={s.statVal}>{reports.length}</Text>
+//             <Text style={s.statLabel}>Reports</Text>
+//             {reports.length > 0 && <Text style={s.statHint}>Tap to view</Text>}
+//           </TouchableOpacity>
+//         </View>
+
+//         {/* ── QR Card ── */}
+//         <TouchableOpacity
+//           style={s.qrCard} activeOpacity={0.9}
+//           onPress={() => {
+//             if (userData?.qrCode) router.push({ pathname: '/(tabs)/FullScreenQR', params: { qrCodeUrl: userData.qrCode } });
+//             else Alert.alert('Info', 'QR code is being generated…');
+//           }}
+//         >
+//           <View style={s.qrLeft}>
+//             <View style={s.qrIconWrap}>
+//               {userData?.qrCode
+//                 ? <Image source={{ uri: userData.qrCode } as ImageSourcePropType} style={s.qrThumb} resizeMode="contain" />
+//                 : <QrCode size={28} color={C.primary} strokeWidth={1.8} />
+//               }
+//             </View>
+//             <View>
+//               <Text style={s.qrTitle}>Your Health QR</Text>
+//               <Text style={s.qrSub}>Tap to view full QR code</Text>
+//             </View>
+//           </View>
+//           <View style={s.qrArrow}><ChevronRight size={18} color={C.primary} strokeWidth={2} /></View>
+//         </TouchableOpacity>
+
+//         {/* ── Upload Section ── */}
+//         <View style={s.section}>
+//           <Text style={s.sectionTitle}>Upload</Text>
+//           <Text style={[s.sectionSub, { marginBottom: 14 }]}>Choose what you want to upload</Text>
+
+//           <View style={s.uploadRow}>
+//             {/* Upload Document */}
+//             <TouchableOpacity
+//               style={[s.uploadCard, uploading === 'doc' && s.uploadCardOff]}
+//               onPress={pickAndUploadDocument}
+//               disabled={!!uploading}
+//               activeOpacity={0.85}
+//             >
+//               {uploading === 'doc'
+//                 ? <ActivityIndicator size="small" color={C.primary} style={{ marginBottom: 10 }} />
+//                 : <View style={[s.uploadCardIcon, { backgroundColor: C.primaryLight }]}>
+//                   <FilePlus size={24} color={C.primary} strokeWidth={1.8} />
+//                 </View>
+//               }
+//               <Text style={s.uploadCardTitle}>Document</Text>
+//               <Text style={s.uploadCardSub}>Generates AI summary</Text>
+//               <Text style={s.uploadCardSub2}>PDF · DOCX · TXT · Image</Text>
+//             </TouchableOpacity>
+
+//             {/* Upload Report */}
+//             <TouchableOpacity
+//               style={[s.uploadCard, uploading === 'report' && s.uploadCardOff, { borderColor: C.warning }]}
+//               onPress={pickAndUploadReport}
+//               disabled={!!uploading}
+//               activeOpacity={0.85}
+//             >
+//               {uploading === 'report'
+//                 ? <ActivityIndicator size="small" color={C.warning} style={{ marginBottom: 10 }} />
+//                 : <View style={[s.uploadCardIcon, { backgroundColor: C.warningLight }]}>
+//                   <FlaskConical size={24} color={C.warning} strokeWidth={1.8} />
+//                 </View>
+//               }
+//               <Text style={[s.uploadCardTitle, { color: C.warning }]}>Lab Report</Text>
+//               <Text style={s.uploadCardSub}>Stored & viewable</Text>
+//               <Text style={s.uploadCardSub2}>KFT · LFT · CBC · etc.</Text>
+//             </TouchableOpacity>
+//           </View>
+//         </View>
+
+//         {/* ── Recent Documents inline ── */}
+//         <View style={s.section}>
+//           <View style={s.sectionHead}>
+//             <Text style={s.sectionTitle}>My Documents</Text>
+//             <TouchableOpacity onPress={() => setShowDocs(true)}>
+//               <Text style={s.seeAll}>See All ({documents.length})</Text>
+//             </TouchableOpacity>
+//           </View>
+
+//           {documents.length === 0 ? (
+//             <View style={s.emptyBox}>
+//               <Upload size={28} color={C.textLight} strokeWidth={1.5} />
+//               <Text style={s.emptyTxt}>No documents yet. Upload one above.</Text>
+//             </View>
+//           ) : (
+//             documents.slice(0, 3).map(doc => (
+//               <TouchableOpacity
+//                 key={doc.id}
+//                 style={s.listCard}
+//                 onPress={() => { setSelDoc(doc); setShowDocDetail(true); }}
+//                 activeOpacity={0.85}
+//               >
+//                 <Text style={s.listEmoji}>{fileEmoji(doc.type)}</Text>
+//                 <View style={s.listInfo}>
+//                   <Text style={s.listName} numberOfLines={1}>{doc.name}</Text>
+//                   <Text style={s.listMeta}>
+//                     {doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+//                     {doc.size ? `  ·  ${(doc.size / 1024).toFixed(1)} KB` : ''}
+//                   </Text>
+//                 </View>
+//                 <StatusBadge status={doc.status} />
+//                 <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+//               </TouchableOpacity>
+//             ))
+//           )}
+//         </View>
+
+//         {/* ── Recent Reports inline ── */}
+//         <View style={s.section}>
+//           <View style={s.sectionHead}>
+//             <Text style={s.sectionTitle}>Lab Reports</Text>
+//             <TouchableOpacity onPress={() => setShowReports(true)}>
+//               <Text style={s.seeAll}>See All ({reports.length})</Text>
+//             </TouchableOpacity>
+//           </View>
+
+//           {reports.length === 0 ? (
+//             <View style={s.emptyBox}>
+//               <FlaskConical size={28} color={C.textLight} strokeWidth={1.5} />
+//               <Text style={s.emptyTxt}>No lab reports yet. Upload one above.</Text>
+//             </View>
+//           ) : (
+//             reports.slice(0, 3).map(report => {
+//               const cc = categoryColor(report.reportCategory);
+//               return (
+//                 <TouchableOpacity
+//                   key={report.id}
+//                   style={s.listCard}
+//                   onPress={() => { setSelReport(report); setShowReportDetail(true); }}
+//                   activeOpacity={0.85}
+//                 >
+//                   <Text style={s.listEmoji}>{fileEmoji(report.fileType)}</Text>
+//                   <View style={s.listInfo}>
+//                     <Text style={s.listName} numberOfLines={1}>{report.fileName}</Text>
+//                     <Text style={s.listMeta}>
+//                       {report.uploadedAt ? new Date(report.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+//                       {report.fileSize ? `  ·  ${(report.fileSize / 1024).toFixed(1)} KB` : ''}
+//                     </Text>
+//                   </View>
+//                   <View style={[s.catBadge, { backgroundColor: cc.bg }]}>
+//                     <Text style={[s.catTxt, { color: cc.text }]}>{report.reportCategory}</Text>
+//                   </View>
+//                   <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+//                 </TouchableOpacity>
+//               );
+//             })
+//           )}
+//         </View>
+
+//       </ScrollView>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           DOCUMENTS LIST MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showDocs} onRequestClose={() => setShowDocs(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <Text style={s.sheetTitle}>My Documents ({documents.length})</Text>
+//               <TouchableOpacity onPress={() => setShowDocs(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             <ScrollView contentContainerStyle={s.sheetBody}>
+//               {documents.length === 0 ? (
+//                 <View style={s.emptyBox}>
+//                   <Text style={s.emptyTxt}>No documents uploaded yet.</Text>
+//                 </View>
+//               ) : (
+//                 documents.map(doc => (
+//                   <TouchableOpacity
+//                     key={doc.id}
+//                     style={s.listCard}
+//                     onPress={() => { setShowDocs(false); setSelDoc(doc); setShowDocDetail(true); }}
+//                     activeOpacity={0.85}
+//                   >
+//                     <Text style={s.listEmoji}>{fileEmoji(doc.type)}</Text>
+//                     <View style={s.listInfo}>
+//                       <Text style={s.listName} numberOfLines={1}>{doc.name}</Text>
+//                       <Text style={s.listMeta}>
+//                         {doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+//                         {doc.size ? `  ·  ${(doc.size / 1024).toFixed(1)} KB` : ''}
+//                       </Text>
+//                     </View>
+//                     <StatusBadge status={doc.status} />
+//                     <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+//                   </TouchableOpacity>
+//                 ))
+//               )}
+//             </ScrollView>
+//           </View>
+//         </View>
+//       </Modal>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           DOCUMENT DETAIL MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showDocDetail} onRequestClose={() => setShowDocDetail(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <Text style={s.sheetTitle} numberOfLines={1}>{selDoc?.name || 'Document'}</Text>
+//               <TouchableOpacity onPress={() => setShowDocDetail(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             {selDoc && (
+//               <ScrollView contentContainerStyle={s.sheetBody}>
+//                 {/* Info */}
+//                 <View style={s.detailInfoRow}>
+//                   <Text style={{ fontSize: 36 }}>{fileEmoji(selDoc.type)}</Text>
+//                   <View style={{ flex: 1 }}>
+//                     <Text style={s.detailName}>{selDoc.name}</Text>
+//                     <Text style={s.detailMeta}>
+//                       {selDoc.uploadDate ? new Date(selDoc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+//                       {selDoc.size ? `  ·  ${(selDoc.size / 1024).toFixed(1)} KB` : ''}
+//                     </Text>
+//                     <StatusBadge status={selDoc.status} />
+//                   </View>
+//                 </View>
+
+//                 {/* View button */}
+//                 <TouchableOpacity
+//                   style={[s.viewBtn, (!selDoc.fileUrl || openingFile) && { opacity: 0.5 }]}
+//                   onPress={() => openFile(selDoc.fileUrl, selDoc.fileId, selDoc.type, selDoc.name)}
+//                   disabled={!selDoc.fileUrl || openingFile}
+//                 >
+//                   {openingFile
+//                     ? <ActivityIndicator size="small" color="#FFF" />
+//                     : <Eye size={18} color="#FFF" strokeWidth={2} />
+//                   }
+//                   <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Document'}</Text>
+//                 </TouchableOpacity>
+
+//                 {/* Summary */}
+//                 {selDoc.summary ? (
+//                   <View style={s.infoBox}>
+//                     <Text style={s.infoBoxTitle}>Processing Summary</Text>
+//                     <Text style={s.infoBoxText}>{selDoc.summary}</Text>
+//                   </View>
+//                 ) : null}
+
+//                 {/* Extracted */}
+//                 {selDoc.extractedData && (
+//                   <View style={s.infoBox}>
+//                     <Text style={s.infoBoxTitle}>Extracted Information</Text>
+//                     {selDoc.extractedData.diagnoses?.length > 0 && <>
+//                       <Text style={s.extractSub}>Diagnoses</Text>
+//                       {selDoc.extractedData.diagnoses.map((d, i) => <Text key={i} style={s.extractItem}>• {d}</Text>)}
+//                     </>}
+//                     {selDoc.extractedData.medications?.length > 0 && <>
+//                       <Text style={[s.extractSub, { color: C.success }]}>Medications</Text>
+//                       {selDoc.extractedData.medications.map((m, i) => <Text key={i} style={[s.extractItem, { color: C.success }]}>• {m}</Text>)}
+//                     </>}
+//                     {selDoc.extractedData.allergies?.length > 0 && <>
+//                       <Text style={[s.extractSub, { color: C.danger }]}>Allergies</Text>
+//                       {selDoc.extractedData.allergies.map((a, i) => <Text key={i} style={[s.extractItem, { color: C.danger }]}>• {a}</Text>)}
+//                     </>}
+//                   </View>
+//                 )}
+//               </ScrollView>
+//             )}
+//             <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowDocDetail(false)}>
+//               <Text style={s.sheetFooterBtnTxt}>Close</Text>
+//             </TouchableOpacity>
+//           </View>
+//         </View>
+//       </Modal>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           REPORTS LIST MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showReports} onRequestClose={() => setShowReports(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <Text style={s.sheetTitle}>Lab Reports ({reports.length})</Text>
+//               <TouchableOpacity onPress={() => setShowReports(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             <ScrollView contentContainerStyle={s.sheetBody}>
+//               {reports.length === 0 ? (
+//                 <View style={s.emptyBox}>
+//                   <FlaskConical size={32} color={C.textLight} strokeWidth={1.5} />
+//                   <Text style={s.emptyTxt}>No lab reports yet.</Text>
+//                   <Text style={[s.emptyTxt, { fontSize: 12 }]}>Use the "Lab Report" upload button to add KFT, LFT, CBC etc.</Text>
+//                 </View>
+//               ) : (
+//                 reports.map(report => {
+//                   const cc = categoryColor(report.reportCategory);
+//                   return (
+//                     <TouchableOpacity
+//                       key={report.id}
+//                       style={s.listCard}
+//                       onPress={() => { setShowReports(false); setSelReport(report); setShowReportDetail(true); }}
+//                       activeOpacity={0.85}
+//                     >
+//                       <Text style={s.listEmoji}>{fileEmoji(report.fileType)}</Text>
+//                       <View style={s.listInfo}>
+//                         <Text style={s.listName} numberOfLines={1}>{report.fileName}</Text>
+//                         <Text style={s.listMeta}>
+//                           {report.uploadedAt ? new Date(report.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+//                           {report.fileSize ? `  ·  ${(report.fileSize / 1024).toFixed(1)} KB` : ''}
+//                         </Text>
+//                       </View>
+//                       <View style={[s.catBadge, { backgroundColor: cc.bg }]}>
+//                         <Text style={[s.catTxt, { color: cc.text }]}>{report.reportCategory}</Text>
+//                       </View>
+//                       <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+//                     </TouchableOpacity>
+//                   );
+//                 })
+//               )}
+//             </ScrollView>
+//           </View>
+//         </View>
+//       </Modal>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           REPORT DETAIL MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showReportDetail} onRequestClose={() => setShowReportDetail(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <Text style={s.sheetTitle} numberOfLines={1}>{selReport?.fileName || 'Report'}</Text>
+//               <TouchableOpacity onPress={() => setShowReportDetail(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             {selReport && (
+//               <ScrollView contentContainerStyle={s.sheetBody}>
+//                 {/* Info */}
+//                 <View style={s.detailInfoRow}>
+//                   <Text style={{ fontSize: 36 }}>{fileEmoji(selReport.fileType)}</Text>
+//                   <View style={{ flex: 1 }}>
+//                     <Text style={s.detailName}>{selReport.fileName}</Text>
+//                     <Text style={s.detailMeta}>
+//                       {selReport.uploadedAt ? new Date(selReport.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+//                       {selReport.fileSize ? `  ·  ${(selReport.fileSize / 1024).toFixed(1)} KB` : ''}
+//                     </Text>
+//                     {(() => {
+//                       const cc = categoryColor(selReport.reportCategory);
+//                       return (
+//                         <View style={[s.catBadge, { backgroundColor: cc.bg, marginTop: 6, alignSelf: 'flex-start' }]}>
+//                           <Text style={[s.catTxt, { color: cc.text }]}>{selReport.reportCategory}</Text>
+//                         </View>
+//                       );
+//                     })()}
+//                   </View>
+//                 </View>
+
+//                 {/* View button */}
+//                 <TouchableOpacity
+//                   style={[s.viewBtn, { backgroundColor: C.warning }, openingFile && { opacity: 0.5 }]}
+//                   onPress={() => openFile(selReport.fileUrl, selReport.fileId, selReport.fileType, selReport.fileName)}
+//                   disabled={openingFile}
+//                 >
+//                   {openingFile
+//                     ? <ActivityIndicator size="small" color="#FFF" />
+//                     : <Eye size={18} color="#FFF" strokeWidth={2} />
+//                   }
+//                   <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Report'}</Text>
+//                 </TouchableOpacity>
+
+//                 {/* Notes */}
+//                 {selReport.notes ? (
+//                   <View style={s.infoBox}>
+//                     <Text style={s.infoBoxTitle}>Notes</Text>
+//                     <Text style={s.infoBoxText}>{selReport.notes}</Text>
+//                   </View>
+//                 ) : null}
+
+//                 {/* Delete */}
+//                 <TouchableOpacity style={s.deleteBtn} onPress={() => handleDeleteReport(selReport)}>
+//                   <Trash2 size={16} color={C.danger} strokeWidth={2} />
+//                   <Text style={s.deleteBtnTxt}>Delete Report</Text>
+//                 </TouchableOpacity>
+//               </ScrollView>
+//             )}
+//             <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowReportDetail(false)}>
+//               <Text style={s.sheetFooterBtnTxt}>Close</Text>
+//             </TouchableOpacity>
+//           </View>
+//         </View>
+//       </Modal>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           DOCTOR VIEWS MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showViews} onRequestClose={() => setShowViews(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <View>
+//                 <Text style={s.sheetTitle}>Doctor Access History</Text>
+//                 <Text style={s.sheetSub}>{viewCount} total {viewCount === 1 ? 'view' : 'views'}</Text>
+//               </View>
+//               <TouchableOpacity onPress={() => setShowViews(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             <ScrollView contentContainerStyle={s.sheetBody}>
+//               {viewHistory.length === 0 ? (
+//                 <View style={s.emptyBox}>
+//                   <Stethoscope size={32} color={C.textLight} strokeWidth={1.5} />
+//                   <Text style={s.emptyTxt}>No doctors have accessed your record yet.</Text>
+//                   <Text style={[s.emptyTxt, { fontSize: 12 }]}>When a doctor views your summary, it will appear here with their name and specialization.</Text>
+//                 </View>
+//               ) : (
+//                 viewHistory.map((v, i) => (
+//                   <View key={i} style={s.viewCard}>
+//                     <View style={[s.viewCardIcon, { backgroundColor: C.primaryLight }]}>
+//                       <Stethoscope size={20} color={C.primary} strokeWidth={2} />
+//                     </View>
+//                     <View style={{ flex: 1 }}>
+//                       <Text style={s.viewCardName}>{v.doctorName}</Text>
+//                       <Text style={s.viewCardSpec}>{v.specialization}</Text>
+//                       <Text style={s.viewCardDate}>
+//                         {new Date(v.viewedAt).toLocaleDateString('en-GB', {
+//                           day: 'numeric', month: 'short', year: 'numeric',
+//                           hour: '2-digit', minute: '2-digit',
+//                         })}
+//                       </Text>
+//                     </View>
+//                   </View>
+//                 ))
+//               )}
+//             </ScrollView>
+//           </View>
+//         </View>
+//       </Modal>
+
+//       {/* ════════════════════════════════════════════════════════════════════════
+//           NOTIFICATIONS MODAL
+//       ════════════════════════════════════════════════════════════════════════ */}
+//       <Modal animationType="slide" transparent visible={showNotifs} onRequestClose={() => setShowNotifs(false)}>
+//         <View style={s.overlay}>
+//           <View style={s.sheet}>
+//             <View style={s.sheetHead}>
+//               <Text style={s.sheetTitle}>Alerts & Notifications</Text>
+//               <TouchableOpacity onPress={() => setShowNotifs(false)} style={s.closeBtn}>
+//                 <X size={20} color={C.textMid} strokeWidth={2} />
+//               </TouchableOpacity>
+//             </View>
+//             <ScrollView>
+//               {notifications.length === 0 ? (
+//                 <View style={s.emptyBox}><Text style={s.emptyTxt}>No notifications.</Text></View>
+//               ) : (
+//                 notifications.map(n => (
+//                   <TouchableOpacity
+//                     key={n._id}
+//                     style={[s.notifRow, !n.read && { backgroundColor: '#F0F7FF' }]}
+//                     onPress={() => {
+//                       setNotifications(prev => prev.map(x => x._id === n._id ? { ...x, read: true } : x));
+//                       ApiService.markNotificationRead(n._id).catch(() => { });
+//                     }}
+//                   >
+//                     <View style={[s.notifIconWrap, { backgroundColor: n.message.includes('SECURITY') ? C.dangerLight : C.primaryLight }]}>
+//                       {n.message.includes('SECURITY')
+//                         ? <ShieldAlert size={18} color={n.read ? C.textLight : C.danger} strokeWidth={2} />
+//                         : <Bell size={18} color={n.read ? C.textLight : C.primary} strokeWidth={2} />
+//                       }
+//                     </View>
+//                     <View style={{ flex: 1 }}>
+//                       <Text style={[s.notifMsg, !n.read && { fontWeight: '700' }]}>{n.message}</Text>
+//                       <Text style={s.notifDate}>{new Date(n.createdAt).toLocaleString()}</Text>
+//                     </View>
+//                     {!n.read && <View style={s.unreadDot} />}
+//                   </TouchableOpacity>
+//                 ))
+//               )}
+//             </ScrollView>
+//           </View>
+//         </View>
+//       </Modal>
+//     </SafeAreaView>
+//   );
+// }
+
+// // ── Small helper component ────────────────────────────────────────────────────
+// function StatusBadge({ status }: { status: string }) {
+//   const map: Record<string, { bg: string; text: string; label: string }> = {
+//     completed: { bg: '#ECFDF5', text: '#059669', label: '✓ Processed' },
+//     failed: { bg: '#FEF2F2', text: '#DC2626', label: '✕ Failed' },
+//     processing: { bg: '#FFFBEB', text: '#D97706', label: '⏳ Processing' },
+//     pending: { bg: '#EFF6FF', text: '#1A56DB', label: '⏳ Pending' },
+//   };
+//   const c = map[status] || map.pending;
+//   return (
+//     <View style={[{ borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: c.bg }]}>
+//       <Text style={{ fontSize: 11, fontWeight: '600', color: c.text }}>{c.label}</Text>
+//     </View>
+//   );
+// }
+
+// // ── Styles ────────────────────────────────────────────────────────────────────
+// const s = StyleSheet.create({
+//   root: { flex: 1, backgroundColor: C.bg },
+//   scroll: { paddingHorizontal: 20, paddingBottom: 40 },
+
+//   // Header
+//   header: { backgroundColor: C.surface, borderRadius: 22, marginVertical: 18, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 16, elevation: 4 },
+//   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+//   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
+//   avatar: { width: 52, height: 52, borderRadius: 16, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+//   avatarTxt: { fontSize: 18, fontWeight: '800', color: '#FFF' },
+//   greeting: { fontSize: 12, color: C.textLight, marginBottom: 2 },
+//   name: { fontSize: 19, fontWeight: '800', color: C.textDark, letterSpacing: -0.3, marginBottom: 4 },
+//   idBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+//   idText: { fontSize: 12, color: C.textMid, fontWeight: '600' },
+//   bloodDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: C.textLight },
+//   bloodText: { fontSize: 12, color: C.success, fontWeight: '700' },
+//   headerActions: { flexDirection: 'row', gap: 8 },
+//   iconBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
+//   iconBtnDanger: { backgroundColor: C.dangerLight },
+//   badge: { position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: 8, backgroundColor: C.danger, alignItems: 'center', justifyContent: 'center' },
+//   badgeTxt: { fontSize: 9, fontWeight: '800', color: '#FFF' },
+
+//   // Stats
+//   statsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+//   statCard: { flex: 1, backgroundColor: C.surface, borderRadius: 18, padding: 14, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
+//   statIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+//   statVal: { fontSize: 22, fontWeight: '800', color: C.textDark },
+//   statLabel: { fontSize: 11, color: C.textLight, marginTop: 2, fontWeight: '600' },
+//   statHint: { fontSize: 9, color: C.primary, marginTop: 3, fontWeight: '600' },
+
+//   // QR
+//   qrCard: { backgroundColor: C.surface, borderRadius: 18, padding: 18, marginBottom: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 3, borderWidth: 1, borderColor: C.primaryLight },
+//   qrLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+//   qrIconWrap: { width: 52, height: 52, borderRadius: 14, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
+//   qrThumb: { width: 36, height: 36, borderRadius: 6 },
+//   qrTitle: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 },
+//   qrSub: { fontSize: 12, color: C.textLight },
+//   qrArrow: { width: 32, height: 32, borderRadius: 10, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
+
+//   // Section
+//   section: { marginBottom: 28 },
+//   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+//   sectionTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, letterSpacing: -0.2, marginBottom: 2 },
+//   sectionSub: { fontSize: 12, color: C.textLight },
+//   seeAll: { fontSize: 13, fontWeight: '700', color: C.primary },
+
+//   // Upload cards
+//   uploadRow: { flexDirection: 'row', gap: 12 },
+//   uploadCard: { flex: 1, backgroundColor: C.surface, borderRadius: 18, padding: 18, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 3, borderWidth: 1.5, borderColor: C.border },
+//   uploadCardOff: { opacity: 0.5 },
+//   uploadCardIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+//   uploadCardTitle: { fontSize: 14, fontWeight: '800', color: C.textDark, marginBottom: 4 },
+//   uploadCardSub: { fontSize: 12, color: C.textMid, textAlign: 'center' },
+//   uploadCardSub2: { fontSize: 10, color: C.textLight, textAlign: 'center', marginTop: 2 },
+
+//   // List items
+//   listCard: { backgroundColor: C.surface, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
+//   listEmoji: { fontSize: 26 },
+//   listInfo: { flex: 1 },
+//   listName: { fontSize: 14, fontWeight: '700', color: C.textDark, marginBottom: 3 },
+//   listMeta: { fontSize: 11, color: C.textLight },
+//   catBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+//   catTxt: { fontSize: 11, fontWeight: '700' },
+
+//   // Empty
+//   emptyBox: { backgroundColor: C.surface, borderRadius: 16, padding: 30, alignItems: 'center', gap: 10 },
+//   emptyTxt: { fontSize: 13, color: C.textLight, textAlign: 'center', lineHeight: 18 },
+
+//   // Sheet (bottom modal)
+//   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+//   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '90%' },
+//   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: 22, borderBottomWidth: 1, borderBottomColor: C.border },
+//   sheetTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, flex: 1, marginRight: 12 },
+//   sheetSub: { fontSize: 12, color: C.textLight, marginTop: 2 },
+//   closeBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
+//   sheetBody: { padding: 20, paddingBottom: 8 },
+//   sheetFooterBtn: { margin: 20, marginTop: 4, backgroundColor: '#F1F5F9', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+//   sheetFooterBtnTxt: { fontSize: 15, fontWeight: '700', color: C.textMid },
+
+//   // Detail
+//   detailInfoRow: { flexDirection: 'row', gap: 14, marginBottom: 18, backgroundColor: '#F8FAFF', borderRadius: 14, padding: 14, alignItems: 'flex-start' },
+//   detailName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 4 },
+//   detailMeta: { fontSize: 12, color: C.textLight },
+
+//   // View button
+//   viewBtn: { backgroundColor: C.primary, borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 },
+//   viewBtnTxt: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+
+//   // Info box
+//   infoBox: { backgroundColor: '#F8FAFF', borderRadius: 14, padding: 16, marginBottom: 14 },
+//   infoBoxTitle: { fontSize: 13, fontWeight: '700', color: C.textDark, marginBottom: 8 },
+//   infoBoxText: { fontSize: 13, color: C.textMid, lineHeight: 20 },
+//   extractSub: { fontSize: 11, fontWeight: '700', color: C.textMid, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 },
+//   extractItem: { fontSize: 13, color: C.textMid, marginBottom: 3 },
+
+//   // Delete
+//   deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.dangerLight, borderRadius: 14, paddingVertical: 14, marginTop: 4 },
+//   deleteBtnTxt: { fontSize: 14, fontWeight: '700', color: C.danger },
+
+//   // Doctor views
+//   viewCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#F8FAFF', borderRadius: 14, padding: 14, marginBottom: 10 },
+//   viewCardIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+//   viewCardName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 },
+//   viewCardSpec: { fontSize: 12, color: C.primary, fontWeight: '600', marginBottom: 3 },
+//   viewCardDate: { fontSize: 11, color: C.textLight },
+
+//   // Notifications
+//   notifRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderBottomWidth: 1, borderBottomColor: C.border },
+//   notifIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+//   notifMsg: { fontSize: 13, color: C.textDark, lineHeight: 18, marginBottom: 3 },
+//   notifDate: { fontSize: 11, color: C.textLight },
+//   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary },
+// });
+
 import React, { useState, useEffect, useCallback, JSX } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView,
-  Image, ImageSourcePropType, Modal, ActivityIndicator,
-  RefreshControl,
+  Image, ImageSourcePropType, Modal, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import {
-  FileText, LogOut, QrCode, Activity, Clock, ChevronRight,
-  X, Eye, Bell, ShieldAlert, Stethoscope, Upload,
-  FlaskConical, FilePlus, Trash2,
+  FileText, LogOut, QrCode, ChevronRight, X, Eye, Bell,
+  ShieldAlert, Stethoscope, Upload, FlaskConical, FilePlus, Trash2,
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { File, Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import ApiService, { BASE_URL } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 
-// ── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
-  bg: '#F3F6FD',
-  surface: '#FFFFFF',
-  primary: '#1A56DB',
-  primaryLight: '#EBF2FF',
-  textDark: '#0D1B3E',
-  textMid: '#4A5A7A',
-  textLight: '#9AAABE',
-  border: '#DDE4F5',
-  success: '#059669',
-  successLight: '#ECFDF5',
-  danger: '#DC2626',
-  dangerLight: '#FEF2F2',
-  warning: '#D97706',
-  warningLight: '#FFFBEB',
-  purple: '#7C3AED',
-  purpleLight: '#EDE9FE',
+  bg: '#F3F6FD', surface: '#FFFFFF', primary: '#1A56DB', primaryLight: '#EBF2FF',
+  textDark: '#0D1B3E', textMid: '#4A5A7A', textLight: '#9AAABE', border: '#DDE4F5',
+  success: '#059669', successLight: '#ECFDF5', danger: '#DC2626', dangerLight: '#FEF2F2',
+  warning: '#D97706', warningLight: '#FFFBEB', purple: '#7C3AED', purpleLight: '#EDE9FE',
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface UserData {
-  name: string; email: string; patientId: string;
-  qrCode?: string; bloodGroup?: string;
-}
-interface DocItem {
-  id: string; fileId: string; name: string; type: string;
-  size: number; status: string; uploadDate: string; fileUrl: string;
-  summary: string;
-  extractedData?: { diagnoses: string[]; medications: string[]; allergies: string[] };
-}
-interface ReportItem {
-  id: string; fileId: string; fileName: string; fileType: string;
-  fileSize: number; reportCategory: string; uploadedAt: string;
-  fileUrl: string; notes: string;
-}
+interface UserData { name: string; email: string; patientId: string; qrCode?: string; bloodGroup?: string; }
+interface DocItem { id: string; fileId: string; name: string; type: string; size: number; status: string; uploadDate: string; fileUrl: string; summary: string; extractedData?: { diagnoses: string[]; medications: string[]; allergies: string[] }; }
+interface ReportItem { id: string; fileId: string; fileName: string; fileType: string; fileSize: number; reportCategory: string; uploadedAt: string; fileUrl: string; notes: string; }
 interface DoctorView { doctorName: string; specialization: string; viewedAt: string; }
 interface AppNotification { _id: string; message: string; createdAt: string; read: boolean; }
 
-const ALLOWED_TYPES = [
-  'application/pdf', 'text/plain',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword', 'image/jpeg', 'image/png', 'image/jpg',
-];
+const ALLOWED_TYPES = ['application/pdf', 'text/plain', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword', 'image/jpeg', 'image/png', 'image/jpg'];
+const fileEmoji = (t: string) => !t ? '📎' : t.startsWith('image/') ? '🖼️' : t.includes('pdf') ? '📄' : t.includes('word') || t.includes('docx') ? '📝' : '📎';
+const catColor = (cat: string) => { switch (cat) { case 'KFT': return { bg: '#EFF6FF', text: '#1D4ED8' }; case 'LFT': return { bg: '#ECFDF5', text: '#065F46' }; case 'CBC': return { bg: '#FFF7ED', text: '#C2410C' }; case 'Lipid Profile': return { bg: '#FDF4FF', text: '#7E22CE' }; case 'Thyroid': return { bg: '#FFF1F2', text: '#BE123C' }; case 'Blood Sugar': return { bg: '#FFFBEB', text: '#92400E' }; default: return { bg: '#F1F5F9', text: '#475569' }; } };
 
-const fileEmoji = (type: string) => {
-  if (!type) return '📎';
-  if (type.startsWith('image/')) return '🖼️';
-  if (type.includes('pdf')) return '📄';
-  if (type.includes('word') || type.includes('docx')) return '📝';
-  return '📎';
-};
-
-const categoryColor = (cat: string) => {
-  switch (cat) {
-    case 'KFT': return { bg: '#EFF6FF', text: '#1D4ED8' };
-    case 'LFT': return { bg: '#ECFDF5', text: '#065F46' };
-    case 'CBC': return { bg: '#FFF7ED', text: '#C2410C' };
-    case 'Lipid Profile': return { bg: '#FDF4FF', text: '#7E22CE' };
-    case 'Thyroid': return { bg: '#FFF1F2', text: '#BE123C' };
-    case 'Blood Sugar': return { bg: '#FFFBEB', text: '#92400E' };
-    default: return { bg: '#F1F5F9', text: '#475569' };
-  }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: string }) {
+  const m: Record<string, { bg: string; text: string; label: string }> = { completed: { bg: '#ECFDF5', text: '#059669', label: '✓ Processed' }, failed: { bg: '#FEF2F2', text: '#DC2626', label: '✕ Failed' }, processing: { bg: '#FFFBEB', text: '#D97706', label: '⏳ Processing' }, pending: { bg: '#EFF6FF', text: '#1A56DB', label: '⏳ Pending' } };
+  const c = m[status] || m.pending;
+  return <View style={{ borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: c.bg }}><Text style={{ fontSize: 11, fontWeight: '600', color: c.text }}>{c.label}</Text></View>;
+}
 
 export default function PatientDashboard(): JSX.Element {
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -2695,237 +3649,110 @@ export default function PatientDashboard(): JSX.Element {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState<'doc' | 'report' | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
-  // selected items for detail modals
   const [selDoc, setSelDoc] = useState<DocItem | null>(null);
   const [selReport, setSelReport] = useState<ReportItem | null>(null);
   const [openingFile, setOpeningFile] = useState(false);
-
-  // modal visibility
   const [showDocs, setShowDocs] = useState(false);
   const [showDocDetail, setShowDocDetail] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [showReportDetail, setShowReportDetail] = useState(false);
   const [showViews, setShowViews] = useState(false);
   const [showNotifs, setShowNotifs] = useState(false);
-
   const router = useRouter();
 
   useEffect(() => { bootstrap(); }, []);
+  useFocusEffect(useCallback(() => { loadNotifications(); loadViewHistory(); }, []));
+  useEffect(() => { const id = setInterval(loadDocuments, 30000); return () => clearInterval(id); }, []);
 
-  useFocusEffect(useCallback(() => {
-    loadNotifications();
-    loadViewHistory();
-  }, []));
-
-  // Poll stats every 30s so processing doc count stays fresh
-  useEffect(() => {
-    const id = setInterval(loadDocuments, 30000);
-    return () => clearInterval(id);
-  }, []);
-
+  // KEY FIX: sequential independent loads — one failure cannot crash others
   async function bootstrap() {
     setLoading(true);
-    try {
-      await Promise.all([loadUserData(), loadDocuments(), loadReports(), loadViewHistory(), loadNotifications()]);
-    } finally {
-      setLoading(false);
-    }
+    try { await loadUserData(); } catch { }
+    try { await loadDocuments(); } catch { }
+    try { await loadReports(); } catch { }
+    try { await loadViewHistory(); } catch { }
+    try { await loadNotifications(); } catch { }
+    setLoading(false);
   }
 
   async function loadUserData() {
     try {
-      const stored = await AsyncStorage.getItem('userData');
-      if (stored) setUserData(JSON.parse(stored));
-      const res = await ApiService.getPatientProfile() as any;
-      if (res.success) {
-        setUserData(res.data);
-        await AsyncStorage.setItem('userData', JSON.stringify(res.data));
-      }
+      const s = await AsyncStorage.getItem('userData');
+      if (s) setUserData(JSON.parse(s));
+      const r = await ApiService.getPatientProfile() as any;
+      if (r.success) { setUserData(r.data); await AsyncStorage.setItem('userData', JSON.stringify(r.data)); }
     } catch { }
   }
+  async function loadDocuments() { try { const r = await ApiService.getMyDocuments() as any; if (r.success && Array.isArray(r.data)) setDocuments(r.data); } catch { } }
+  async function loadReports() { try { const r = await ApiService.getMyReports() as any; if (r.success && Array.isArray(r.data)) setReports(r.data); } catch { } }
+  async function loadViewHistory() { try { const r = await ApiService.getViewHistory() as any; if (r.success) { setViewCount(r.data?.viewCount || 0); setViewHistory(r.data?.viewHistory || []); } } catch { } }
+  async function loadNotifications() { try { const r = await ApiService.getPatientNotifications(); if (r.success && r.data) setNotifications(r.data as any); } catch { } }
 
-  async function loadDocuments() {
-    try {
-      const res = await ApiService.getMyDocuments() as any;
-      if (res.success && Array.isArray(res.data)) setDocuments(res.data);
-    } catch { }
-  }
-
-  async function loadReports() {
-    try {
-      const res = await ApiService.getMyReports() as any;
-      if (res.success && Array.isArray(res.data)) setReports(res.data);
-    } catch { }
-  }
-
-  async function loadViewHistory() {
-    try {
-      const res = await ApiService.getViewHistory() as any;
-      if (res.success) {
-        setViewCount(res.data?.viewCount || 0);
-        setViewHistory(res.data?.viewHistory || []);
-      }
-    } catch { }
-  }
-
-  async function loadNotifications() {
-    try {
-      const res = await ApiService.getPatientNotifications();
-      if (res.success && res.data) setNotifications(res.data as any);
-    } catch { }
-  }
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await bootstrap();
-    setRefreshing(false);
-  };
-
-  // ── File picker & upload ──────────────────────────────────────────────────────
+  const onRefresh = async () => { setRefreshing(true); await bootstrap(); setRefreshing(false); };
 
   const pickAndUploadDocument = async () => {
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
-      if (res.canceled || !res.assets?.[0]) return;
-      const d = res.assets[0];
-      setUploading('doc');
-      // Optimistic count bump
-      setDocuments(prev => [{
-        id: `temp-${Date.now()}`, fileId: '', name: d.name, type: d.mimeType || 'application/octet-stream',
-        size: d.size || 0, status: 'processing', uploadDate: new Date().toISOString(),
-        fileUrl: '', summary: '',
-      }, ...prev]);
-      const uploadRes = await ApiService.uploadFile({ uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size });
-      if (uploadRes.success) {
-        Alert.alert('Uploaded ✓', 'Document queued for processing. Summary will update shortly.');
-        setTimeout(() => { loadDocuments(); try { ApiService.refreshAllSummaries(); } catch { } }, 4000);
-      } else {
-        setDocuments(prev => prev.filter(x => !x.id.startsWith('temp-')));
-        Alert.alert('Error', uploadRes.message || 'Failed to upload document');
-      }
-    } catch (e: any) {
-      setDocuments(prev => prev.filter(x => !x.id.startsWith('temp-')));
-      Alert.alert('Error', e.message || 'Failed to upload document');
-    } finally { setUploading(null); }
+      const r = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
+      if (r.canceled || !r.assets?.[0]) return;
+      const d = r.assets[0]; setUploading('doc');
+      setDocuments(p => [{ id: `temp-${Date.now()}`, fileId: '', name: d.name, type: d.mimeType || 'application/octet-stream', size: d.size || 0, status: 'processing', uploadDate: new Date().toISOString(), fileUrl: '', summary: '' }, ...p]);
+      const u = await ApiService.uploadFile({ uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size });
+      if (u.success) { Alert.alert('Uploaded ✓', 'Document queued for processing.'); setTimeout(() => { loadDocuments(); try { ApiService.refreshAllSummaries(); } catch { } }, 4000); }
+      else { setDocuments(p => p.filter(x => !x.id.startsWith('temp-'))); Alert.alert('Error', u.message || 'Failed to upload'); }
+    } catch (e: any) { setDocuments(p => p.filter(x => !x.id.startsWith('temp-'))); Alert.alert('Error', e.message || 'Failed to upload'); }
+    finally { setUploading(null); }
   };
 
   const pickAndUploadReport = async () => {
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
-      if (res.canceled || !res.assets?.[0]) return;
-      const d = res.assets[0];
-      setUploading('report');
-      const uploadRes = await ApiService.uploadReport(
-        { uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size }
-      );
-      if (uploadRes.success) {
-        Alert.alert('Uploaded ✓', 'Lab report saved successfully.');
-        await loadReports();
-      } else {
-        Alert.alert('Error', uploadRes.message || 'Failed to upload report');
-      }
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to upload report');
-    } finally { setUploading(null); }
+      const r = await DocumentPicker.getDocumentAsync({ type: ALLOWED_TYPES, copyToCacheDirectory: true }) as any;
+      if (r.canceled || !r.assets?.[0]) return;
+      const d = r.assets[0]; setUploading('report');
+      const u = await ApiService.uploadReport({ uri: d.uri, type: d.mimeType || 'application/octet-stream', name: d.name, size: d.size });
+      if (u.success) { Alert.alert('Uploaded ✓', 'Lab report saved.'); await loadReports(); }
+      else Alert.alert('Error', u.message || 'Failed to upload report');
+    } catch (e: any) { Alert.alert('Error', e.message || 'Failed to upload report'); }
+    finally { setUploading(null); }
   };
 
-  // ── File viewer using NEW FileSystem API ───────────────────────────────────────
-
+  // Uses LEGACY expo-file-system API — compatible with Expo Go SDK 53
+  // The new 'expo-file-system/next' File/Paths API is NOT available in Expo Go
   const openFile = async (url: string, fileId?: string, fileType?: string, fileName?: string) => {
     if (!url) { Alert.alert('Not available', 'This file is still being processed.'); return; }
-
-    // Replace localhost with real LAN IP — critical for Expo Go on real device
     let fixedUrl = url;
-    try {
-      const lanHost = new URL(BASE_URL).hostname;
-      fixedUrl = url.replace('localhost', lanHost).replace('127.0.0.1', lanHost);
-    } catch { }
-
+    try { const h = new URL(BASE_URL).hostname; fixedUrl = url.replace('localhost', h).replace('127.0.0.1', h); } catch { }
     setOpeningFile(true);
     try {
-      const safeId = fileId || url.split('/').pop() || `file_${Date.now()}`;
-      const ext = (fileType?.includes('pdf') || url.endsWith('.pdf')) ? '.pdf'
-        : (fileType?.startsWith('image/jpeg') || url.endsWith('.jpg')) ? '.jpg'
-          : (fileType?.startsWith('image/png') || url.endsWith('.png')) ? '.png'
-            : (fileType?.includes('word') || url.endsWith('.docx')) ? '.docx'
-              : '.pdf';
-
-      // Create a File object using the new API
-      const localFile = new File(Paths.cache, `seharoop_${safeId}${ext}`);
-
-      // Check if already cached using the new API
-      if (!localFile.exists) {
+      const safeId = fileId || `file_${Date.now()}`;
+      const ext = fileType?.includes('pdf') || url.endsWith('.pdf') ? '.pdf' : fileType?.startsWith('image/jpeg') || url.endsWith('.jpg') ? '.jpg' : fileType?.startsWith('image/png') || url.endsWith('.png') ? '.png' : fileType?.includes('word') || url.endsWith('.docx') ? '.docx' : '.pdf';
+      const localUri = `${FileSystem.cacheDirectory}seharoop_${safeId}${ext}`;
+      const info = await FileSystem.getInfoAsync(localUri);
+      if (!info.exists) {
         const token = await ApiService.getToken();
-
-        // Download using the new File.downloadFileAsync API
-        const downloadedFile = await File.downloadFileAsync(fixedUrl, localFile, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          idempotent: true, // Overwrite if exists
-        });
-
-        if (!downloadedFile.exists) {
-          Alert.alert('Download Error', 'Failed to download the file. Make sure the backend is running and accessible.');
-          return;
-        }
+        const dl = await FileSystem.downloadAsync(fixedUrl, localUri, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (dl.status !== 200) { Alert.alert('Download Error', `Server returned HTTP ${dl.status}.\nCheck backend at ${BASE_URL}`); return; }
       }
-
       const canShare = await Sharing.isAvailableAsync();
-      if (!canShare) { Alert.alert('Not supported', 'File sharing is not available on this device.'); return; }
-
-      await Sharing.shareAsync(localFile.uri, {
-        mimeType: fileType || 'application/octet-stream',
-        dialogTitle: fileName || 'Open File',
-        UTI: fileType?.includes('pdf') ? 'com.adobe.pdf' : undefined,
-      });
-    } catch (err: any) {
-      console.error('openFile error:', err);
-      Alert.alert('Cannot open file', err.message || 'An unexpected error occurred.');
-    } finally {
-      setOpeningFile(false);
-    }
+      if (!canShare) { Alert.alert('Not supported', 'File sharing not available.'); return; }
+      await Sharing.shareAsync(localUri, { mimeType: fileType || 'application/octet-stream', dialogTitle: fileName || 'Open File', UTI: fileType?.includes('pdf') ? 'com.adobe.pdf' : undefined });
+    } catch (e: any) { Alert.alert('Cannot open file', e.message || 'An error occurred.'); }
+    finally { setOpeningFile(false); }
   };
 
-  const handleDeleteReport = async (report: ReportItem) => {
-    Alert.alert('Delete Report', `Delete "${report.fileName}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await ApiService.deleteReport(report.id);
-            setReports(prev => prev.filter(r => r.id !== report.id));
-            setShowReportDetail(false);
-          } catch (e: any) { Alert.alert('Error', e.message); }
-        }
-      },
-    ]);
+  const handleDeleteReport = async (r: ReportItem) => {
+    Alert.alert('Delete Report', `Delete "${r.fileName}"?`, [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => { try { await ApiService.deleteReport(r.id); setReports(p => p.filter(x => x.id !== r.id)); setShowReportDetail(false); } catch (e: any) { Alert.alert('Error', e.message); } } }]);
   };
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out', style: 'destructive', onPress: async () => {
-          try { await ApiService.logout(); } catch { Alert.alert('Error', 'Failed to sign out'); }
-        }
-      },
-    ]);
-  };
+  const handleLogout = () => { Alert.alert('Sign Out', 'Are you sure?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign Out', style: 'destructive', onPress: async () => { try { await ApiService.logout(); } catch { Alert.alert('Error', 'Failed to sign out'); } } }]); };
 
   const unreadCount = notifications.filter(n => !n.read).length;
   const initials = userData?.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || 'P';
 
-  // ── Render ────────────────────────────────────────────────────────────────────
-
   return (
     <SafeAreaView style={s.root}>
-      <ScrollView
-        contentContainerStyle={s.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={s.scroll} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} />} showsVerticalScrollIndicator={false}>
 
-        {/* ── Header ── */}
+        {/* Header */}
         <View style={s.header}>
           <View style={s.headerRow}>
             <View style={s.avatarRow}>
@@ -2935,664 +3762,265 @@ export default function PatientDashboard(): JSX.Element {
                 <Text style={s.name} numberOfLines={1}>{userData?.name || 'Patient'}</Text>
                 <View style={s.idBadge}>
                   <Text style={s.idText}>ID: {userData?.patientId || '—'}</Text>
-                  {userData?.bloodGroup && (
-                    <><View style={s.bloodDot} /><Text style={s.bloodText}>{userData.bloodGroup}ve</Text></>
-                  )}
+                  {userData?.bloodGroup && <><View style={s.bloodDot} /><Text style={s.bloodText}>{userData.bloodGroup}ve</Text></>}
                 </View>
               </View>
             </View>
             <View style={s.headerActions}>
               <TouchableOpacity style={s.iconBtn} onPress={() => setShowNotifs(true)}>
                 <Bell size={18} color={C.primary} strokeWidth={2} />
-                {unreadCount > 0 && (
-                  <View style={s.badge}><Text style={s.badgeTxt}>{unreadCount}</Text></View>
-                )}
+                {unreadCount > 0 && <View style={s.badge}><Text style={s.badgeTxt}>{unreadCount}</Text></View>}
               </TouchableOpacity>
-              <TouchableOpacity style={[s.iconBtn, s.iconBtnDanger]} onPress={handleLogout}>
-                <LogOut size={18} color={C.danger} strokeWidth={2} />
-              </TouchableOpacity>
+              <TouchableOpacity style={[s.iconBtn, s.iconBtnDanger]} onPress={handleLogout}><LogOut size={18} color={C.danger} strokeWidth={2} /></TouchableOpacity>
             </View>
           </View>
         </View>
 
-        {/* ── Stats row ── */}
+        {/* Stats */}
         <View style={s.statsRow}>
-          {/* Documents */}
           <TouchableOpacity style={s.statCard} onPress={() => setShowDocs(true)} activeOpacity={0.8}>
-            <View style={[s.statIcon, { backgroundColor: C.primaryLight }]}>
-              <FileText size={18} color={C.primary} strokeWidth={2} />
-            </View>
-            <Text style={s.statVal}>{documents.length}</Text>
-            <Text style={s.statLabel}>Documents</Text>
+            <View style={[s.statIcon, { backgroundColor: C.primaryLight }]}><FileText size={18} color={C.primary} strokeWidth={2} /></View>
+            <Text style={s.statVal}>{documents.length}</Text><Text style={s.statLabel}>Documents</Text>
             {documents.length > 0 && <Text style={s.statHint}>Tap to view</Text>}
           </TouchableOpacity>
-
-          {/* Dr Views */}
           <TouchableOpacity style={s.statCard} onPress={() => setShowViews(true)} activeOpacity={0.8}>
-            <View style={[s.statIcon, { backgroundColor: C.successLight }]}>
-              <Stethoscope size={18} color={C.success} strokeWidth={2} />
-            </View>
-            <Text style={s.statVal}>{viewCount}</Text>
-            <Text style={s.statLabel}>Dr. Views</Text>
+            <View style={[s.statIcon, { backgroundColor: C.successLight }]}><Stethoscope size={18} color={C.success} strokeWidth={2} /></View>
+            <Text style={s.statVal}>{viewCount}</Text><Text style={s.statLabel}>Dr. Views</Text>
             {viewCount > 0 && <Text style={s.statHint}>Tap to see</Text>}
           </TouchableOpacity>
-
-          {/* Reports */}
           <TouchableOpacity style={s.statCard} onPress={() => setShowReports(true)} activeOpacity={0.8}>
-            <View style={[s.statIcon, { backgroundColor: C.warningLight }]}>
-              <FlaskConical size={18} color={C.warning} strokeWidth={2} />
-            </View>
-            <Text style={s.statVal}>{reports.length}</Text>
-            <Text style={s.statLabel}>Reports</Text>
+            <View style={[s.statIcon, { backgroundColor: C.warningLight }]}><FlaskConical size={18} color={C.warning} strokeWidth={2} /></View>
+            <Text style={s.statVal}>{reports.length}</Text><Text style={s.statLabel}>Reports</Text>
             {reports.length > 0 && <Text style={s.statHint}>Tap to view</Text>}
           </TouchableOpacity>
         </View>
 
-        {/* ── QR Card ── */}
-        <TouchableOpacity
-          style={s.qrCard} activeOpacity={0.9}
-          onPress={() => {
-            if (userData?.qrCode) router.push({ pathname: '/(tabs)/FullScreenQR', params: { qrCodeUrl: userData.qrCode } });
-            else Alert.alert('Info', 'QR code is being generated…');
-          }}
-        >
+        {/* QR */}
+        <TouchableOpacity style={s.qrCard} activeOpacity={0.9}
+          onPress={() => { if (userData?.qrCode) router.push({ pathname: '/(tabs)/FullScreenQR', params: { qrCodeUrl: userData.qrCode } }); else Alert.alert('Info', 'QR code is being generated…'); }}>
           <View style={s.qrLeft}>
-            <View style={s.qrIconWrap}>
-              {userData?.qrCode
-                ? <Image source={{ uri: userData.qrCode } as ImageSourcePropType} style={s.qrThumb} resizeMode="contain" />
-                : <QrCode size={28} color={C.primary} strokeWidth={1.8} />
-              }
-            </View>
-            <View>
-              <Text style={s.qrTitle}>Your Health QR</Text>
-              <Text style={s.qrSub}>Tap to view full QR code</Text>
-            </View>
+            <View style={s.qrIconWrap}>{userData?.qrCode ? <Image source={{ uri: userData.qrCode } as ImageSourcePropType} style={s.qrThumb} resizeMode="contain" /> : <QrCode size={28} color={C.primary} strokeWidth={1.8} />}</View>
+            <View><Text style={s.qrTitle}>Your Health QR</Text><Text style={s.qrSub}>Tap to view full QR code</Text></View>
           </View>
           <View style={s.qrArrow}><ChevronRight size={18} color={C.primary} strokeWidth={2} /></View>
         </TouchableOpacity>
 
-        {/* ── Upload Section ── */}
+        {/* Upload */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Upload</Text>
           <Text style={[s.sectionSub, { marginBottom: 14 }]}>Choose what you want to upload</Text>
-
           <View style={s.uploadRow}>
-            {/* Upload Document */}
-            <TouchableOpacity
-              style={[s.uploadCard, uploading === 'doc' && s.uploadCardOff]}
-              onPress={pickAndUploadDocument}
-              disabled={!!uploading}
-              activeOpacity={0.85}
-            >
-              {uploading === 'doc'
-                ? <ActivityIndicator size="small" color={C.primary} style={{ marginBottom: 10 }} />
-                : <View style={[s.uploadCardIcon, { backgroundColor: C.primaryLight }]}>
-                  <FilePlus size={24} color={C.primary} strokeWidth={1.8} />
-                </View>
-              }
-              <Text style={s.uploadCardTitle}>Document</Text>
-              <Text style={s.uploadCardSub}>Generates AI summary</Text>
-              <Text style={s.uploadCardSub2}>PDF · DOCX · TXT · Image</Text>
+            <TouchableOpacity style={[s.uploadCard, uploading === 'doc' && s.uploadCardOff]} onPress={pickAndUploadDocument} disabled={!!uploading} activeOpacity={0.85}>
+              {uploading === 'doc' ? <ActivityIndicator size="small" color={C.primary} style={{ marginBottom: 10 }} /> : <View style={[s.uploadCardIcon, { backgroundColor: C.primaryLight }]}><FilePlus size={24} color={C.primary} strokeWidth={1.8} /></View>}
+              <Text style={s.uploadCardTitle}>Document</Text><Text style={s.uploadCardSub}>Generates AI summary</Text><Text style={s.uploadCardSub2}>PDF · DOCX · TXT · Image</Text>
             </TouchableOpacity>
-
-            {/* Upload Report */}
-            <TouchableOpacity
-              style={[s.uploadCard, uploading === 'report' && s.uploadCardOff, { borderColor: C.warning }]}
-              onPress={pickAndUploadReport}
-              disabled={!!uploading}
-              activeOpacity={0.85}
-            >
-              {uploading === 'report'
-                ? <ActivityIndicator size="small" color={C.warning} style={{ marginBottom: 10 }} />
-                : <View style={[s.uploadCardIcon, { backgroundColor: C.warningLight }]}>
-                  <FlaskConical size={24} color={C.warning} strokeWidth={1.8} />
-                </View>
-              }
-              <Text style={[s.uploadCardTitle, { color: C.warning }]}>Lab Report</Text>
-              <Text style={s.uploadCardSub}>Stored & viewable</Text>
-              <Text style={s.uploadCardSub2}>KFT · LFT · CBC · etc.</Text>
+            <TouchableOpacity style={[s.uploadCard, uploading === 'report' && s.uploadCardOff, { borderColor: C.warning }]} onPress={pickAndUploadReport} disabled={!!uploading} activeOpacity={0.85}>
+              {uploading === 'report' ? <ActivityIndicator size="small" color={C.warning} style={{ marginBottom: 10 }} /> : <View style={[s.uploadCardIcon, { backgroundColor: C.warningLight }]}><FlaskConical size={24} color={C.warning} strokeWidth={1.8} /></View>}
+              <Text style={[s.uploadCardTitle, { color: C.warning }]}>Lab Report</Text><Text style={s.uploadCardSub}>Stored & viewable</Text><Text style={s.uploadCardSub2}>KFT · LFT · CBC · etc.</Text>
             </TouchableOpacity>
           </View>
         </View>
 
-        {/* ── Recent Documents inline ── */}
+        {/* Documents */}
         <View style={s.section}>
-          <View style={s.sectionHead}>
-            <Text style={s.sectionTitle}>My Documents</Text>
-            <TouchableOpacity onPress={() => setShowDocs(true)}>
-              <Text style={s.seeAll}>See All ({documents.length})</Text>
-            </TouchableOpacity>
-          </View>
-
-          {documents.length === 0 ? (
-            <View style={s.emptyBox}>
-              <Upload size={28} color={C.textLight} strokeWidth={1.5} />
-              <Text style={s.emptyTxt}>No documents yet. Upload one above.</Text>
-            </View>
-          ) : (
-            documents.slice(0, 3).map(doc => (
-              <TouchableOpacity
-                key={doc.id}
-                style={s.listCard}
-                onPress={() => { setSelDoc(doc); setShowDocDetail(true); }}
-                activeOpacity={0.85}
-              >
+          <View style={s.sectionHead}><Text style={s.sectionTitle}>My Documents</Text><TouchableOpacity onPress={() => setShowDocs(true)}><Text style={s.seeAll}>See All ({documents.length})</Text></TouchableOpacity></View>
+          {documents.length === 0 ? <View style={s.emptyBox}><Upload size={28} color={C.textLight} strokeWidth={1.5} /><Text style={s.emptyTxt}>No documents yet.</Text></View>
+            : documents.slice(0, 3).map(doc => (
+              <TouchableOpacity key={doc.id} style={s.listCard} onPress={() => { setSelDoc(doc); setShowDocDetail(true); }} activeOpacity={0.85}>
                 <Text style={s.listEmoji}>{fileEmoji(doc.type)}</Text>
-                <View style={s.listInfo}>
-                  <Text style={s.listName} numberOfLines={1}>{doc.name}</Text>
-                  <Text style={s.listMeta}>
-                    {doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                    {doc.size ? `  ·  ${(doc.size / 1024).toFixed(1)} KB` : ''}
-                  </Text>
-                </View>
-                <StatusBadge status={doc.status} />
-                <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+                <View style={s.listInfo}><Text style={s.listName} numberOfLines={1}>{doc.name}</Text><Text style={s.listMeta}>{doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}{doc.size ? `  ·  ${(doc.size / 1024).toFixed(1)} KB` : ''}</Text></View>
+                <StatusBadge status={doc.status} /><ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
               </TouchableOpacity>
-            ))
-          )}
+            ))}
         </View>
 
-        {/* ── Recent Reports inline ── */}
+        {/* Reports */}
         <View style={s.section}>
-          <View style={s.sectionHead}>
-            <Text style={s.sectionTitle}>Lab Reports</Text>
-            <TouchableOpacity onPress={() => setShowReports(true)}>
-              <Text style={s.seeAll}>See All ({reports.length})</Text>
-            </TouchableOpacity>
-          </View>
-
-          {reports.length === 0 ? (
-            <View style={s.emptyBox}>
-              <FlaskConical size={28} color={C.textLight} strokeWidth={1.5} />
-              <Text style={s.emptyTxt}>No lab reports yet. Upload one above.</Text>
-            </View>
-          ) : (
-            reports.slice(0, 3).map(report => {
-              const cc = categoryColor(report.reportCategory);
-              return (
-                <TouchableOpacity
-                  key={report.id}
-                  style={s.listCard}
-                  onPress={() => { setSelReport(report); setShowReportDetail(true); }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={s.listEmoji}>{fileEmoji(report.fileType)}</Text>
-                  <View style={s.listInfo}>
-                    <Text style={s.listName} numberOfLines={1}>{report.fileName}</Text>
-                    <Text style={s.listMeta}>
-                      {report.uploadedAt ? new Date(report.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                      {report.fileSize ? `  ·  ${(report.fileSize / 1024).toFixed(1)} KB` : ''}
-                    </Text>
-                  </View>
-                  <View style={[s.catBadge, { backgroundColor: cc.bg }]}>
-                    <Text style={[s.catTxt, { color: cc.text }]}>{report.reportCategory}</Text>
-                  </View>
+          <View style={s.sectionHead}><Text style={s.sectionTitle}>Lab Reports</Text><TouchableOpacity onPress={() => setShowReports(true)}><Text style={s.seeAll}>See All ({reports.length})</Text></TouchableOpacity></View>
+          {reports.length === 0 ? <View style={s.emptyBox}><FlaskConical size={28} color={C.textLight} strokeWidth={1.5} /><Text style={s.emptyTxt}>No lab reports yet.</Text></View>
+            : reports.slice(0, 3).map(r => {
+              const cc = catColor(r.reportCategory); return (
+                <TouchableOpacity key={r.id} style={s.listCard} onPress={() => { setSelReport(r); setShowReportDetail(true); }} activeOpacity={0.85}>
+                  <Text style={s.listEmoji}>{fileEmoji(r.fileType)}</Text>
+                  <View style={s.listInfo}><Text style={s.listName} numberOfLines={1}>{r.fileName}</Text><Text style={s.listMeta}>{r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</Text></View>
+                  <View style={[s.catBadge, { backgroundColor: cc.bg }]}><Text style={[s.catTxt, { color: cc.text }]}>{r.reportCategory}</Text></View>
                   <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
                 </TouchableOpacity>
               );
-            })
-          )}
+            })}
         </View>
-
       </ScrollView>
 
-      {/* ════════════════════════════════════════════════════════════════════════
-          DOCUMENTS LIST MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
+      {/* Docs List Modal */}
       <Modal animationType="slide" transparent visible={showDocs} onRequestClose={() => setShowDocs(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>My Documents ({documents.length})</Text>
-              <TouchableOpacity onPress={() => setShowDocs(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><Text style={s.sheetTitle}>My Documents ({documents.length})</Text><TouchableOpacity onPress={() => setShowDocs(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          <ScrollView contentContainerStyle={s.sheetBody}>
+            {documents.length === 0 ? <View style={s.emptyBox}><Text style={s.emptyTxt}>No documents yet.</Text></View>
+              : documents.map(doc => (
+                <TouchableOpacity key={doc.id} style={s.listCard} onPress={() => { setShowDocs(false); setSelDoc(doc); setShowDocDetail(true); }} activeOpacity={0.85}>
+                  <Text style={s.listEmoji}>{fileEmoji(doc.type)}</Text>
+                  <View style={s.listInfo}><Text style={s.listName} numberOfLines={1}>{doc.name}</Text><Text style={s.listMeta}>{doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</Text></View>
+                  <StatusBadge status={doc.status} /><ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
+              ))}
+          </ScrollView>
+        </View></View>
+      </Modal>
+
+      {/* Doc Detail Modal */}
+      <Modal animationType="slide" transparent visible={showDocDetail} onRequestClose={() => setShowDocDetail(false)}>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><Text style={s.sheetTitle} numberOfLines={1}>{selDoc?.name || 'Document'}</Text><TouchableOpacity onPress={() => setShowDocDetail(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          {selDoc && (<ScrollView contentContainerStyle={s.sheetBody}>
+            <View style={s.detailInfoRow}>
+              <Text style={{ fontSize: 36 }}>{fileEmoji(selDoc.type)}</Text>
+              <View style={{ flex: 1 }}><Text style={s.detailName}>{selDoc.name}</Text><Text style={s.detailMeta}>{selDoc.uploadDate ? new Date(selDoc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}{selDoc.size ? `  ·  ${(selDoc.size / 1024).toFixed(1)} KB` : ''}</Text><StatusBadge status={selDoc.status} /></View>
             </View>
-            <ScrollView contentContainerStyle={s.sheetBody}>
-              {documents.length === 0 ? (
-                <View style={s.emptyBox}>
-                  <Text style={s.emptyTxt}>No documents uploaded yet.</Text>
-                </View>
-              ) : (
-                documents.map(doc => (
-                  <TouchableOpacity
-                    key={doc.id}
-                    style={s.listCard}
-                    onPress={() => { setShowDocs(false); setSelDoc(doc); setShowDocDetail(true); }}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={s.listEmoji}>{fileEmoji(doc.type)}</Text>
-                    <View style={s.listInfo}>
-                      <Text style={s.listName} numberOfLines={1}>{doc.name}</Text>
-                      <Text style={s.listMeta}>
-                        {doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                        {doc.size ? `  ·  ${(doc.size / 1024).toFixed(1)} KB` : ''}
-                      </Text>
-                    </View>
-                    <StatusBadge status={doc.status} />
+            <TouchableOpacity style={[s.viewBtn, (!selDoc.fileUrl || openingFile) && { opacity: 0.5 }]} onPress={() => openFile(selDoc.fileUrl, selDoc.fileId, selDoc.type, selDoc.name)} disabled={!selDoc.fileUrl || openingFile}>
+              {openingFile ? <ActivityIndicator size="small" color="#FFF" /> : <Eye size={18} color="#FFF" strokeWidth={2} />}
+              <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Document'}</Text>
+            </TouchableOpacity>
+            {selDoc.summary ? <View style={s.infoBox}><Text style={s.infoBoxTitle}>Summary</Text><Text style={s.infoBoxText}>{selDoc.summary}</Text></View> : null}
+            {selDoc.extractedData && <View style={s.infoBox}>
+              <Text style={s.infoBoxTitle}>Extracted Information</Text>
+              {selDoc.extractedData.diagnoses?.length > 0 && <><Text style={s.extractSub}>Diagnoses</Text>{selDoc.extractedData.diagnoses.map((d, i) => <Text key={i} style={s.extractItem}>• {d}</Text>)}</>}
+              {selDoc.extractedData.medications?.length > 0 && <><Text style={[s.extractSub, { color: C.success }]}>Medications</Text>{selDoc.extractedData.medications.map((m, i) => <Text key={i} style={[s.extractItem, { color: C.success }]}>• {m}</Text>)}</>}
+              {selDoc.extractedData.allergies?.length > 0 && <><Text style={[s.extractSub, { color: C.danger }]}>Allergies</Text>{selDoc.extractedData.allergies.map((a, i) => <Text key={i} style={[s.extractItem, { color: C.danger }]}>• {a}</Text>)}</>}
+            </View>}
+          </ScrollView>)}
+          <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowDocDetail(false)}><Text style={s.sheetFooterBtnTxt}>Close</Text></TouchableOpacity>
+        </View></View>
+      </Modal>
+
+      {/* Reports List Modal */}
+      <Modal animationType="slide" transparent visible={showReports} onRequestClose={() => setShowReports(false)}>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><Text style={s.sheetTitle}>Lab Reports ({reports.length})</Text><TouchableOpacity onPress={() => setShowReports(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          <ScrollView contentContainerStyle={s.sheetBody}>
+            {reports.length === 0 ? <View style={s.emptyBox}><FlaskConical size={32} color={C.textLight} strokeWidth={1.5} /><Text style={s.emptyTxt}>No lab reports yet.</Text></View>
+              : reports.map(r => {
+                const cc = catColor(r.reportCategory); return (
+                  <TouchableOpacity key={r.id} style={s.listCard} onPress={() => { setShowReports(false); setSelReport(r); setShowReportDetail(true); }} activeOpacity={0.85}>
+                    <Text style={s.listEmoji}>{fileEmoji(r.fileType)}</Text>
+                    <View style={s.listInfo}><Text style={s.listName} numberOfLines={1}>{r.fileName}</Text><Text style={s.listMeta}>{r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</Text></View>
+                    <View style={[s.catBadge, { backgroundColor: cc.bg }]}><Text style={[s.catTxt, { color: cc.text }]}>{r.reportCategory}</Text></View>
                     <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
                   </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
+                );
+              })}
+          </ScrollView>
+        </View></View>
       </Modal>
 
-      {/* ════════════════════════════════════════════════════════════════════════
-          DOCUMENT DETAIL MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
-      <Modal animationType="slide" transparent visible={showDocDetail} onRequestClose={() => setShowDocDetail(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle} numberOfLines={1}>{selDoc?.name || 'Document'}</Text>
-              <TouchableOpacity onPress={() => setShowDocDetail(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-            {selDoc && (
-              <ScrollView contentContainerStyle={s.sheetBody}>
-                {/* Info */}
-                <View style={s.detailInfoRow}>
-                  <Text style={{ fontSize: 36 }}>{fileEmoji(selDoc.type)}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.detailName}>{selDoc.name}</Text>
-                    <Text style={s.detailMeta}>
-                      {selDoc.uploadDate ? new Date(selDoc.uploadDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
-                      {selDoc.size ? `  ·  ${(selDoc.size / 1024).toFixed(1)} KB` : ''}
-                    </Text>
-                    <StatusBadge status={selDoc.status} />
-                  </View>
-                </View>
-
-                {/* View button */}
-                <TouchableOpacity
-                  style={[s.viewBtn, (!selDoc.fileUrl || openingFile) && { opacity: 0.5 }]}
-                  onPress={() => openFile(selDoc.fileUrl, selDoc.fileId, selDoc.type, selDoc.name)}
-                  disabled={!selDoc.fileUrl || openingFile}
-                >
-                  {openingFile
-                    ? <ActivityIndicator size="small" color="#FFF" />
-                    : <Eye size={18} color="#FFF" strokeWidth={2} />
-                  }
-                  <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Document'}</Text>
-                </TouchableOpacity>
-
-                {/* Summary */}
-                {selDoc.summary ? (
-                  <View style={s.infoBox}>
-                    <Text style={s.infoBoxTitle}>Processing Summary</Text>
-                    <Text style={s.infoBoxText}>{selDoc.summary}</Text>
-                  </View>
-                ) : null}
-
-                {/* Extracted */}
-                {selDoc.extractedData && (
-                  <View style={s.infoBox}>
-                    <Text style={s.infoBoxTitle}>Extracted Information</Text>
-                    {selDoc.extractedData.diagnoses?.length > 0 && <>
-                      <Text style={s.extractSub}>Diagnoses</Text>
-                      {selDoc.extractedData.diagnoses.map((d, i) => <Text key={i} style={s.extractItem}>• {d}</Text>)}
-                    </>}
-                    {selDoc.extractedData.medications?.length > 0 && <>
-                      <Text style={[s.extractSub, { color: C.success }]}>Medications</Text>
-                      {selDoc.extractedData.medications.map((m, i) => <Text key={i} style={[s.extractItem, { color: C.success }]}>• {m}</Text>)}
-                    </>}
-                    {selDoc.extractedData.allergies?.length > 0 && <>
-                      <Text style={[s.extractSub, { color: C.danger }]}>Allergies</Text>
-                      {selDoc.extractedData.allergies.map((a, i) => <Text key={i} style={[s.extractItem, { color: C.danger }]}>• {a}</Text>)}
-                    </>}
-                  </View>
-                )}
-              </ScrollView>
-            )}
-            <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowDocDetail(false)}>
-              <Text style={s.sheetFooterBtnTxt}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ════════════════════════════════════════════════════════════════════════
-          REPORTS LIST MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
-      <Modal animationType="slide" transparent visible={showReports} onRequestClose={() => setShowReports(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>Lab Reports ({reports.length})</Text>
-              <TouchableOpacity onPress={() => setShowReports(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView contentContainerStyle={s.sheetBody}>
-              {reports.length === 0 ? (
-                <View style={s.emptyBox}>
-                  <FlaskConical size={32} color={C.textLight} strokeWidth={1.5} />
-                  <Text style={s.emptyTxt}>No lab reports yet.</Text>
-                  <Text style={[s.emptyTxt, { fontSize: 12 }]}>Use the "Lab Report" upload button to add KFT, LFT, CBC etc.</Text>
-                </View>
-              ) : (
-                reports.map(report => {
-                  const cc = categoryColor(report.reportCategory);
-                  return (
-                    <TouchableOpacity
-                      key={report.id}
-                      style={s.listCard}
-                      onPress={() => { setShowReports(false); setSelReport(report); setShowReportDetail(true); }}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={s.listEmoji}>{fileEmoji(report.fileType)}</Text>
-                      <View style={s.listInfo}>
-                        <Text style={s.listName} numberOfLines={1}>{report.fileName}</Text>
-                        <Text style={s.listMeta}>
-                          {report.uploadedAt ? new Date(report.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                          {report.fileSize ? `  ·  ${(report.fileSize / 1024).toFixed(1)} KB` : ''}
-                        </Text>
-                      </View>
-                      <View style={[s.catBadge, { backgroundColor: cc.bg }]}>
-                        <Text style={[s.catTxt, { color: cc.text }]}>{report.reportCategory}</Text>
-                      </View>
-                      <ChevronRight size={15} color={C.textLight} strokeWidth={2} style={{ marginLeft: 6 }} />
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ════════════════════════════════════════════════════════════════════════
-          REPORT DETAIL MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
+      {/* Report Detail Modal */}
       <Modal animationType="slide" transparent visible={showReportDetail} onRequestClose={() => setShowReportDetail(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle} numberOfLines={1}>{selReport?.fileName || 'Report'}</Text>
-              <TouchableOpacity onPress={() => setShowReportDetail(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><Text style={s.sheetTitle} numberOfLines={1}>{selReport?.fileName || 'Report'}</Text><TouchableOpacity onPress={() => setShowReportDetail(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          {selReport && (<ScrollView contentContainerStyle={s.sheetBody}>
+            <View style={s.detailInfoRow}>
+              <Text style={{ fontSize: 36 }}>{fileEmoji(selReport.fileType)}</Text>
+              <View style={{ flex: 1 }}><Text style={s.detailName}>{selReport.fileName}</Text><Text style={s.detailMeta}>{selReport.uploadedAt ? new Date(selReport.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</Text>{(() => { const cc = catColor(selReport.reportCategory); return <View style={[s.catBadge, { backgroundColor: cc.bg, marginTop: 6, alignSelf: 'flex-start' }]}><Text style={[s.catTxt, { color: cc.text }]}>{selReport.reportCategory}</Text></View>; })()}</View>
             </View>
-            {selReport && (
-              <ScrollView contentContainerStyle={s.sheetBody}>
-                {/* Info */}
-                <View style={s.detailInfoRow}>
-                  <Text style={{ fontSize: 36 }}>{fileEmoji(selReport.fileType)}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.detailName}>{selReport.fileName}</Text>
-                    <Text style={s.detailMeta}>
-                      {selReport.uploadedAt ? new Date(selReport.uploadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
-                      {selReport.fileSize ? `  ·  ${(selReport.fileSize / 1024).toFixed(1)} KB` : ''}
-                    </Text>
-                    {(() => {
-                      const cc = categoryColor(selReport.reportCategory);
-                      return (
-                        <View style={[s.catBadge, { backgroundColor: cc.bg, marginTop: 6, alignSelf: 'flex-start' }]}>
-                          <Text style={[s.catTxt, { color: cc.text }]}>{selReport.reportCategory}</Text>
-                        </View>
-                      );
-                    })()}
-                  </View>
-                </View>
-
-                {/* View button */}
-                <TouchableOpacity
-                  style={[s.viewBtn, { backgroundColor: C.warning }, openingFile && { opacity: 0.5 }]}
-                  onPress={() => openFile(selReport.fileUrl, selReport.fileId, selReport.fileType, selReport.fileName)}
-                  disabled={openingFile}
-                >
-                  {openingFile
-                    ? <ActivityIndicator size="small" color="#FFF" />
-                    : <Eye size={18} color="#FFF" strokeWidth={2} />
-                  }
-                  <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Report'}</Text>
-                </TouchableOpacity>
-
-                {/* Notes */}
-                {selReport.notes ? (
-                  <View style={s.infoBox}>
-                    <Text style={s.infoBoxTitle}>Notes</Text>
-                    <Text style={s.infoBoxText}>{selReport.notes}</Text>
-                  </View>
-                ) : null}
-
-                {/* Delete */}
-                <TouchableOpacity style={s.deleteBtn} onPress={() => handleDeleteReport(selReport)}>
-                  <Trash2 size={16} color={C.danger} strokeWidth={2} />
-                  <Text style={s.deleteBtnTxt}>Delete Report</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            )}
-            <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowReportDetail(false)}>
-              <Text style={s.sheetFooterBtnTxt}>Close</Text>
+            <TouchableOpacity style={[s.viewBtn, { backgroundColor: C.warning }, openingFile && { opacity: 0.5 }]} onPress={() => openFile(selReport.fileUrl, selReport.fileId, selReport.fileType, selReport.fileName)} disabled={openingFile}>
+              {openingFile ? <ActivityIndicator size="small" color="#FFF" /> : <Eye size={18} color="#FFF" strokeWidth={2} />}
+              <Text style={s.viewBtnTxt}>{openingFile ? 'Opening…' : 'View Report'}</Text>
             </TouchableOpacity>
-          </View>
-        </View>
+            {selReport.notes ? <View style={s.infoBox}><Text style={s.infoBoxTitle}>Notes</Text><Text style={s.infoBoxText}>{selReport.notes}</Text></View> : null}
+            <TouchableOpacity style={s.deleteBtn} onPress={() => handleDeleteReport(selReport)}><Trash2 size={16} color={C.danger} strokeWidth={2} /><Text style={s.deleteBtnTxt}>Delete Report</Text></TouchableOpacity>
+          </ScrollView>)}
+          <TouchableOpacity style={s.sheetFooterBtn} onPress={() => setShowReportDetail(false)}><Text style={s.sheetFooterBtnTxt}>Close</Text></TouchableOpacity>
+        </View></View>
       </Modal>
 
-      {/* ════════════════════════════════════════════════════════════════════════
-          DOCTOR VIEWS MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
+      {/* Views Modal */}
       <Modal animationType="slide" transparent visible={showViews} onRequestClose={() => setShowViews(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <View>
-                <Text style={s.sheetTitle}>Doctor Access History</Text>
-                <Text style={s.sheetSub}>{viewCount} total {viewCount === 1 ? 'view' : 'views'}</Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowViews(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView contentContainerStyle={s.sheetBody}>
-              {viewHistory.length === 0 ? (
-                <View style={s.emptyBox}>
-                  <Stethoscope size={32} color={C.textLight} strokeWidth={1.5} />
-                  <Text style={s.emptyTxt}>No doctors have accessed your record yet.</Text>
-                  <Text style={[s.emptyTxt, { fontSize: 12 }]}>When a doctor views your summary, it will appear here with their name and specialization.</Text>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><View><Text style={s.sheetTitle}>Doctor Access History</Text><Text style={s.sheetSub}>{viewCount} total {viewCount === 1 ? 'view' : 'views'}</Text></View><TouchableOpacity onPress={() => setShowViews(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          <ScrollView contentContainerStyle={s.sheetBody}>
+            {viewHistory.length === 0 ? <View style={s.emptyBox}><Stethoscope size={32} color={C.textLight} strokeWidth={1.5} /><Text style={s.emptyTxt}>No doctors have accessed your record yet.</Text></View>
+              : viewHistory.map((v, i) => (
+                <View key={i} style={s.viewCard}>
+                  <View style={[s.viewCardIcon, { backgroundColor: C.primaryLight }]}><Stethoscope size={20} color={C.primary} strokeWidth={2} /></View>
+                  <View style={{ flex: 1 }}><Text style={s.viewCardName}>{v.doctorName}</Text><Text style={s.viewCardSpec}>{v.specialization}</Text><Text style={s.viewCardDate}>{new Date(v.viewedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text></View>
                 </View>
-              ) : (
-                viewHistory.map((v, i) => (
-                  <View key={i} style={s.viewCard}>
-                    <View style={[s.viewCardIcon, { backgroundColor: C.primaryLight }]}>
-                      <Stethoscope size={20} color={C.primary} strokeWidth={2} />
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.viewCardName}>{v.doctorName}</Text>
-                      <Text style={s.viewCardSpec}>{v.specialization}</Text>
-                      <Text style={s.viewCardDate}>
-                        {new Date(v.viewedAt).toLocaleDateString('en-GB', {
-                          day: 'numeric', month: 'short', year: 'numeric',
-                          hour: '2-digit', minute: '2-digit',
-                        })}
-                      </Text>
-                    </View>
-                  </View>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
+              ))}
+          </ScrollView>
+        </View></View>
       </Modal>
 
-      {/* ════════════════════════════════════════════════════════════════════════
-          NOTIFICATIONS MODAL
-      ════════════════════════════════════════════════════════════════════════ */}
+      {/* Notifications Modal */}
       <Modal animationType="slide" transparent visible={showNotifs} onRequestClose={() => setShowNotifs(false)}>
-        <View style={s.overlay}>
-          <View style={s.sheet}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>Alerts & Notifications</Text>
-              <TouchableOpacity onPress={() => setShowNotifs(false)} style={s.closeBtn}>
-                <X size={20} color={C.textMid} strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
-              {notifications.length === 0 ? (
-                <View style={s.emptyBox}><Text style={s.emptyTxt}>No notifications.</Text></View>
-              ) : (
-                notifications.map(n => (
-                  <TouchableOpacity
-                    key={n._id}
-                    style={[s.notifRow, !n.read && { backgroundColor: '#F0F7FF' }]}
-                    onPress={() => {
-                      setNotifications(prev => prev.map(x => x._id === n._id ? { ...x, read: true } : x));
-                      ApiService.markNotificationRead(n._id).catch(() => { });
-                    }}
-                  >
-                    <View style={[s.notifIconWrap, { backgroundColor: n.message.includes('SECURITY') ? C.dangerLight : C.primaryLight }]}>
-                      {n.message.includes('SECURITY')
-                        ? <ShieldAlert size={18} color={n.read ? C.textLight : C.danger} strokeWidth={2} />
-                        : <Bell size={18} color={n.read ? C.textLight : C.primary} strokeWidth={2} />
-                      }
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.notifMsg, !n.read && { fontWeight: '700' }]}>{n.message}</Text>
-                      <Text style={s.notifDate}>{new Date(n.createdAt).toLocaleString()}</Text>
-                    </View>
-                    {!n.read && <View style={s.unreadDot} />}
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
-          </View>
-        </View>
+        <View style={s.overlay}><View style={s.sheet}>
+          <View style={s.sheetHead}><Text style={s.sheetTitle}>Alerts & Notifications</Text><TouchableOpacity onPress={() => setShowNotifs(false)} style={s.closeBtn}><X size={20} color={C.textMid} strokeWidth={2} /></TouchableOpacity></View>
+          <ScrollView>
+            {notifications.length === 0 ? <View style={s.emptyBox}><Text style={s.emptyTxt}>No notifications.</Text></View>
+              : notifications.map(n => (
+                <TouchableOpacity key={n._id} style={[s.notifRow, !n.read && { backgroundColor: '#F0F7FF' }]}
+                  onPress={() => { setNotifications(p => p.map(x => x._id === n._id ? { ...x, read: true } : x)); ApiService.markNotificationRead(n._id).catch(() => { }); }}>
+                  <View style={[s.notifIconWrap, { backgroundColor: n.message.includes('SECURITY') ? C.dangerLight : C.primaryLight }]}>
+                    {n.message.includes('SECURITY') ? <ShieldAlert size={18} color={n.read ? C.textLight : C.danger} strokeWidth={2} /> : <Bell size={18} color={n.read ? C.textLight : C.primary} strokeWidth={2} />}
+                  </View>
+                  <View style={{ flex: 1 }}><Text style={[s.notifMsg, !n.read && { fontWeight: '700' }]}>{n.message}</Text><Text style={s.notifDate}>{new Date(n.createdAt).toLocaleString()}</Text></View>
+                  {!n.read && <View style={s.unreadDot} />}
+                </TouchableOpacity>
+              ))}
+          </ScrollView>
+        </View></View>
       </Modal>
     </SafeAreaView>
   );
 }
 
-// ── Small helper component ────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { bg: string; text: string; label: string }> = {
-    completed: { bg: '#ECFDF5', text: '#059669', label: '✓ Processed' },
-    failed: { bg: '#FEF2F2', text: '#DC2626', label: '✕ Failed' },
-    processing: { bg: '#FFFBEB', text: '#D97706', label: '⏳ Processing' },
-    pending: { bg: '#EFF6FF', text: '#1A56DB', label: '⏳ Pending' },
-  };
-  const c = map[status] || map.pending;
-  return (
-    <View style={[{ borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: c.bg }]}>
-      <Text style={{ fontSize: 11, fontWeight: '600', color: c.text }}>{c.label}</Text>
-    </View>
-  );
-}
-
-// ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
-  scroll: { paddingHorizontal: 20, paddingBottom: 40 },
-
-  // Header
+  root: { flex: 1, backgroundColor: C.bg }, scroll: { paddingHorizontal: 20, paddingBottom: 40 },
   header: { backgroundColor: C.surface, borderRadius: 22, marginVertical: 18, padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 16, elevation: 4 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
   avatar: { width: 52, height: 52, borderRadius: 16, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  avatarTxt: { fontSize: 18, fontWeight: '800', color: '#FFF' },
-  greeting: { fontSize: 12, color: C.textLight, marginBottom: 2 },
+  avatarTxt: { fontSize: 18, fontWeight: '800', color: '#FFF' }, greeting: { fontSize: 12, color: C.textLight, marginBottom: 2 },
   name: { fontSize: 19, fontWeight: '800', color: C.textDark, letterSpacing: -0.3, marginBottom: 4 },
-  idBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  idText: { fontSize: 12, color: C.textMid, fontWeight: '600' },
-  bloodDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: C.textLight },
-  bloodText: { fontSize: 12, color: C.success, fontWeight: '700' },
+  idBadge: { flexDirection: 'row', alignItems: 'center', gap: 6 }, idText: { fontSize: 12, color: C.textMid, fontWeight: '600' },
+  bloodDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: C.textLight }, bloodText: { fontSize: 12, color: C.success, fontWeight: '700' },
   headerActions: { flexDirection: 'row', gap: 8 },
   iconBtn: { width: 38, height: 38, borderRadius: 12, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
   iconBtnDanger: { backgroundColor: C.dangerLight },
   badge: { position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: 8, backgroundColor: C.danger, alignItems: 'center', justifyContent: 'center' },
   badgeTxt: { fontSize: 9, fontWeight: '800', color: '#FFF' },
-
-  // Stats
   statsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   statCard: { flex: 1, backgroundColor: C.surface, borderRadius: 18, padding: 14, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
   statIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  statVal: { fontSize: 22, fontWeight: '800', color: C.textDark },
-  statLabel: { fontSize: 11, color: C.textLight, marginTop: 2, fontWeight: '600' },
-  statHint: { fontSize: 9, color: C.primary, marginTop: 3, fontWeight: '600' },
-
-  // QR
+  statVal: { fontSize: 22, fontWeight: '800', color: C.textDark }, statLabel: { fontSize: 11, color: C.textLight, marginTop: 2, fontWeight: '600' }, statHint: { fontSize: 9, color: C.primary, marginTop: 3, fontWeight: '600' },
   qrCard: { backgroundColor: C.surface, borderRadius: 18, padding: 18, marginBottom: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 12, elevation: 3, borderWidth: 1, borderColor: C.primaryLight },
-  qrLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  qrIconWrap: { width: 52, height: 52, borderRadius: 14, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
-  qrThumb: { width: 36, height: 36, borderRadius: 6 },
-  qrTitle: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 },
-  qrSub: { fontSize: 12, color: C.textLight },
+  qrLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 }, qrIconWrap: { width: 52, height: 52, borderRadius: 14, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  qrThumb: { width: 36, height: 36, borderRadius: 6 }, qrTitle: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 }, qrSub: { fontSize: 12, color: C.textLight },
   qrArrow: { width: 32, height: 32, borderRadius: 10, backgroundColor: C.primaryLight, alignItems: 'center', justifyContent: 'center' },
-
-  // Section
-  section: { marginBottom: 28 },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, letterSpacing: -0.2, marginBottom: 2 },
-  sectionSub: { fontSize: 12, color: C.textLight },
-  seeAll: { fontSize: 13, fontWeight: '700', color: C.primary },
-
-  // Upload cards
+  section: { marginBottom: 28 }, sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  sectionTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, letterSpacing: -0.2, marginBottom: 2 }, sectionSub: { fontSize: 12, color: C.textLight }, seeAll: { fontSize: 13, fontWeight: '700', color: C.primary },
   uploadRow: { flexDirection: 'row', gap: 12 },
   uploadCard: { flex: 1, backgroundColor: C.surface, borderRadius: 18, padding: 18, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 3, borderWidth: 1.5, borderColor: C.border },
-  uploadCardOff: { opacity: 0.5 },
-  uploadCardIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-  uploadCardTitle: { fontSize: 14, fontWeight: '800', color: C.textDark, marginBottom: 4 },
-  uploadCardSub: { fontSize: 12, color: C.textMid, textAlign: 'center' },
-  uploadCardSub2: { fontSize: 10, color: C.textLight, textAlign: 'center', marginTop: 2 },
-
-  // List items
+  uploadCardOff: { opacity: 0.5 }, uploadCardIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  uploadCardTitle: { fontSize: 14, fontWeight: '800', color: C.textDark, marginBottom: 4 }, uploadCardSub: { fontSize: 12, color: C.textMid, textAlign: 'center' }, uploadCardSub2: { fontSize: 10, color: C.textLight, textAlign: 'center', marginTop: 2 },
   listCard: { backgroundColor: C.surface, borderRadius: 14, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6, elevation: 2 },
-  listEmoji: { fontSize: 26 },
-  listInfo: { flex: 1 },
-  listName: { fontSize: 14, fontWeight: '700', color: C.textDark, marginBottom: 3 },
-  listMeta: { fontSize: 11, color: C.textLight },
-  catBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  catTxt: { fontSize: 11, fontWeight: '700' },
-
-  // Empty
-  emptyBox: { backgroundColor: C.surface, borderRadius: 16, padding: 30, alignItems: 'center', gap: 10 },
-  emptyTxt: { fontSize: 13, color: C.textLight, textAlign: 'center', lineHeight: 18 },
-
-  // Sheet (bottom modal)
+  listEmoji: { fontSize: 26 }, listInfo: { flex: 1 }, listName: { fontSize: 14, fontWeight: '700', color: C.textDark, marginBottom: 3 }, listMeta: { fontSize: 11, color: C.textLight },
+  catBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 }, catTxt: { fontSize: 11, fontWeight: '700' },
+  emptyBox: { backgroundColor: C.surface, borderRadius: 16, padding: 30, alignItems: 'center', gap: 10 }, emptyTxt: { fontSize: 13, color: C.textLight, textAlign: 'center', lineHeight: 18 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '90%' },
   sheetHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', padding: 22, borderBottomWidth: 1, borderBottomColor: C.border },
-  sheetTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, flex: 1, marginRight: 12 },
-  sheetSub: { fontSize: 12, color: C.textLight, marginTop: 2 },
+  sheetTitle: { fontSize: 17, fontWeight: '700', color: C.textDark, flex: 1, marginRight: 12 }, sheetSub: { fontSize: 12, color: C.textLight, marginTop: 2 },
   closeBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' },
-  sheetBody: { padding: 20, paddingBottom: 8 },
-  sheetFooterBtn: { margin: 20, marginTop: 4, backgroundColor: '#F1F5F9', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
-  sheetFooterBtnTxt: { fontSize: 15, fontWeight: '700', color: C.textMid },
-
-  // Detail
+  sheetBody: { padding: 20, paddingBottom: 8 }, sheetFooterBtn: { margin: 20, marginTop: 4, backgroundColor: '#F1F5F9', borderRadius: 14, paddingVertical: 14, alignItems: 'center' }, sheetFooterBtnTxt: { fontSize: 15, fontWeight: '700', color: C.textMid },
   detailInfoRow: { flexDirection: 'row', gap: 14, marginBottom: 18, backgroundColor: '#F8FAFF', borderRadius: 14, padding: 14, alignItems: 'flex-start' },
-  detailName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 4 },
-  detailMeta: { fontSize: 12, color: C.textLight },
-
-  // View button
-  viewBtn: { backgroundColor: C.primary, borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 },
-  viewBtnTxt: { color: '#FFF', fontSize: 15, fontWeight: '700' },
-
-  // Info box
-  infoBox: { backgroundColor: '#F8FAFF', borderRadius: 14, padding: 16, marginBottom: 14 },
-  infoBoxTitle: { fontSize: 13, fontWeight: '700', color: C.textDark, marginBottom: 8 },
-  infoBoxText: { fontSize: 13, color: C.textMid, lineHeight: 20 },
-  extractSub: { fontSize: 11, fontWeight: '700', color: C.textMid, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 },
-  extractItem: { fontSize: 13, color: C.textMid, marginBottom: 3 },
-
-  // Delete
-  deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.dangerLight, borderRadius: 14, paddingVertical: 14, marginTop: 4 },
-  deleteBtnTxt: { fontSize: 14, fontWeight: '700', color: C.danger },
-
-  // Doctor views
+  detailName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 4 }, detailMeta: { fontSize: 12, color: C.textLight },
+  viewBtn: { backgroundColor: C.primary, borderRadius: 14, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16 }, viewBtnTxt: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+  infoBox: { backgroundColor: '#F8FAFF', borderRadius: 14, padding: 16, marginBottom: 14 }, infoBoxTitle: { fontSize: 13, fontWeight: '700', color: C.textDark, marginBottom: 8 }, infoBoxText: { fontSize: 13, color: C.textMid, lineHeight: 20 },
+  extractSub: { fontSize: 11, fontWeight: '700', color: C.textMid, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8, marginBottom: 4 }, extractItem: { fontSize: 13, color: C.textMid, marginBottom: 3 },
+  deleteBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.dangerLight, borderRadius: 14, paddingVertical: 14, marginTop: 4 }, deleteBtnTxt: { fontSize: 14, fontWeight: '700', color: C.danger },
   viewCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#F8FAFF', borderRadius: 14, padding: 14, marginBottom: 10 },
   viewCardIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  viewCardName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 },
-  viewCardSpec: { fontSize: 12, color: C.primary, fontWeight: '600', marginBottom: 3 },
-  viewCardDate: { fontSize: 11, color: C.textLight },
-
-  // Notifications
+  viewCardName: { fontSize: 15, fontWeight: '700', color: C.textDark, marginBottom: 2 }, viewCardSpec: { fontSize: 12, color: C.primary, fontWeight: '600', marginBottom: 3 }, viewCardDate: { fontSize: 11, color: C.textLight },
   notifRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderBottomWidth: 1, borderBottomColor: C.border },
   notifIconWrap: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  notifMsg: { fontSize: 13, color: C.textDark, lineHeight: 18, marginBottom: 3 },
-  notifDate: { fontSize: 11, color: C.textLight },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary },
+  notifMsg: { fontSize: 13, color: C.textDark, lineHeight: 18, marginBottom: 3 }, notifDate: { fontSize: 11, color: C.textLight }, unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary },
 });
