@@ -69,3 +69,7 @@ backend/slm-service/models/
 # Other Python temp / uploads
 # ===============================
 backend/slm-service/uploads/
+
+
+/android
+/ios

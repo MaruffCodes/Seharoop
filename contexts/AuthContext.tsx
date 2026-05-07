@@ -1361,6 +1361,217 @@
 //   return isLoggedIn && userRole === 'doctor';
 // };
 
+
+
+// import React, {
+//   createContext, useContext, useState, useEffect,
+//   ReactNode, useCallback, useRef,
+// } from 'react';
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { router } from 'expo-router';
+
+// interface UserData {
+//   id?: string; name?: string; email?: string; patientId?: string;
+//   doctorId?: string; bloodGroup?: string; hasMedicalForm?: boolean;
+//   profileCompleted?: boolean;[key: string]: any;
+// }
+
+// interface AuthContextType {
+//   isLoggedIn: boolean; userRole: 'patient' | 'doctor' | null;
+//   userData: UserData | null; isLoading: boolean; isFirstLogin: boolean;
+//   login: (token: string, role: 'patient' | 'doctor', userData?: UserData) => Promise<void>;
+//   logout: () => Promise<void>; checkAuthStatus: () => Promise<void>;
+//   completeFirstLogin: () => Promise<void>;
+//   updateUserData: (newData: Partial<UserData>) => Promise<void>;
+//   refreshAuthState: () => Promise<void>; refreshUserData: () => Promise<void>;
+// }
+
+// interface AuthProviderProps { children: ReactNode; }
+
+// const KEYS = {
+//   TOKEN: 'seharoop_token', USER_ROLE: 'seharoop_user_role',
+//   USER_DATA: 'seharoop_user_data', FIRST_LOGIN: 'seharoop_first_login',
+//   LAST_ACTIVE: 'seharoop_last_active',
+// } as const;
+
+// const SESSION_TIMEOUT = 30 * 24 * 60 * 60 * 1000;
+// const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// export function AuthProvider({ children }: AuthProviderProps) {
+//   const [isLoggedIn, setIsLoggedIn] = useState(false);
+//   const [userRole, setUserRole] = useState<'patient' | 'doctor' | null>(null);
+//   const [userData, setUserData] = useState<UserData | null>(null);
+//   const [isLoading, setIsLoading] = useState(true);
+//   const [isFirstLogin, setIsFirstLogin] = useState(false);
+//   const isMounted = useRef(true);
+//   useEffect(() => () => { isMounted.current = false; }, []);
+
+//   const safe = (fn: () => void) => { if (isMounted.current) fn(); };
+
+//   const updateLastActive = async () => {
+//     try { await AsyncStorage.setItem(KEYS.LAST_ACTIVE, Date.now().toString()); } catch { }
+//   };
+
+//   const isExpired = async (): Promise<boolean> => {
+//     try {
+//       const t = await AsyncStorage.getItem(KEYS.LAST_ACTIVE);
+//       return !t || Date.now() - parseInt(t) > SESSION_TIMEOUT;
+//     } catch { return true; }
+//   };
+
+//   const clearStorage = async () => {
+//     try {
+//       await AsyncStorage.multiRemove([KEYS.TOKEN, KEYS.USER_ROLE, KEYS.USER_DATA, KEYS.FIRST_LOGIN, KEYS.LAST_ACTIVE]);
+//     } catch { }
+//   };
+
+//   const clearState = () => safe(() => {
+//     setIsLoggedIn(false); setUserRole(null); setUserData(null); setIsFirstLogin(false);
+//   });
+
+//   const checkAuthStatus = useCallback(async () => {
+//     try {
+//       safe(() => setIsLoading(true));
+//       const [token, role, udStr, firstFlag] = await Promise.all([
+//         AsyncStorage.getItem(KEYS.TOKEN), AsyncStorage.getItem(KEYS.USER_ROLE),
+//         AsyncStorage.getItem(KEYS.USER_DATA), AsyncStorage.getItem(KEYS.FIRST_LOGIN),
+//       ]);
+//       if (!isMounted.current) return;
+//       if (token && role) {
+//         if (await isExpired()) { await clearStorage(); clearState(); return; }
+//         safe(() => {
+//           setIsLoggedIn(true); setUserRole(role as any);
+//           setUserData(udStr ? JSON.parse(udStr) : null);
+//           setIsFirstLogin(firstFlag === 'true');
+//         });
+//         await updateLastActive();
+//       } else clearState();
+//     } catch { clearState(); }
+//     finally { safe(() => setIsLoading(false)); }
+//   }, []);
+
+//   const refreshAuthState = useCallback(async () => { await checkAuthStatus(); }, [checkAuthStatus]);
+//   const refreshUserData = useCallback(async () => {
+//     try {
+//       const s = await AsyncStorage.getItem(KEYS.USER_DATA);
+//       if (s) safe(() => setUserData(JSON.parse(s)));
+//     } catch { }
+//   }, []);
+
+//   // ── LOGIN — key fix for doctor 403 ───────────────────────────────────────
+//   // Problem: ApiService.setToken() was being called in register.tsx AFTER
+//   // login() returned, but the doctor-dashboard was already firing
+//   // getDoctorProfile() with whatever token was cached. We now set the token
+//   // in AsyncStorage FIRST (synchronously before any state update) so that
+//   // any API call that fires immediately gets the correct token.
+//   const login = async (token: string, role: 'patient' | 'doctor', userDataParam?: UserData): Promise<void> => {
+//     if (!token || !role) throw new Error('Invalid credentials');
+
+//     // 1. CLEAR old storage completely
+//     await clearStorage();
+//     safe(() => clearState());
+//     await new Promise(r => setTimeout(r, 50));
+
+//     // 2. Write new token FIRST — before any state or navigation
+//     //    This ensures any API call that fires immediately uses the right token
+//     await AsyncStorage.setItem(KEYS.TOKEN, token);
+//     await AsyncStorage.setItem(KEYS.USER_ROLE, role);
+//     await updateLastActive();
+
+//     if (userDataParam) {
+//       await AsyncStorage.setItem(KEYS.USER_DATA, JSON.stringify(userDataParam));
+//     }
+
+//     const firstLogin = role === 'patient' ? !(userDataParam?.hasMedicalForm) : false;
+//     await AsyncStorage.setItem(KEYS.FIRST_LOGIN, firstLogin ? 'true' : 'false');
+
+//     // 3. Update state
+//     safe(() => {
+//       setIsLoggedIn(true); setUserRole(role);
+//       setUserData(userDataParam ?? null); setIsFirstLogin(firstLogin);
+//     });
+
+//     // 4. Brief tick for React to flush state
+//     await new Promise(r => setTimeout(r, 100));
+
+//     // 5. Navigate
+//     if (role === 'patient') {
+//       router.replace(firstLogin ? '/(tabs)/patient-medicalForm' : '/(tabs)/patient-dashboard');
+//     } else {
+//       router.replace('/(tabs)/doctor-dashboard');
+//     }
+//   };
+
+//   const logout = async (): Promise<void> => {
+//     await clearStorage(); clearState(); router.replace('/login');
+//   };
+
+//   // ── completeFirstLogin — no isLoading wrapper (prevents crash) ────────────
+//   const completeFirstLogin = async (): Promise<void> => {
+//     try {
+//       const raw = await AsyncStorage.getItem(KEYS.USER_DATA);
+//       const current = raw ? JSON.parse(raw) : {};
+//       const updated = { ...current, hasMedicalForm: true, profileCompleted: true };
+//       await Promise.all([
+//         AsyncStorage.setItem(KEYS.USER_DATA, JSON.stringify(updated)),
+//         AsyncStorage.setItem(KEYS.FIRST_LOGIN, 'false'),
+//       ]);
+//       safe(() => { setUserData(updated); setIsFirstLogin(false); });
+//       await new Promise(r => setTimeout(r, 80));
+//       router.replace('/(tabs)/patient-dashboard');
+//     } catch (e) {
+//       console.error('completeFirstLogin error:', e);
+//       router.replace('/(tabs)/patient-dashboard');
+//     }
+//   };
+
+//   const updateUserData = async (newData: Partial<UserData>): Promise<void> => {
+//     try {
+//       const base = userData || {};
+//       const updated = { ...base, ...newData };
+//       await AsyncStorage.setItem(KEYS.USER_DATA, JSON.stringify(updated));
+//       safe(() => setUserData(updated));
+//     } catch { }
+//   };
+
+//   useEffect(() => {
+//     if (!isLoggedIn) return;
+//     const id = setInterval(updateLastActive, 60_000);
+//     return () => clearInterval(id);
+//   }, [isLoggedIn]);
+
+//   useEffect(() => { checkAuthStatus(); }, []);
+
+//   const value: AuthContextType = {
+//     isLoggedIn, userRole, userData, isLoading, isFirstLogin,
+//     login, logout, checkAuthStatus, completeFirstLogin,
+//     updateUserData, refreshAuthState, refreshUserData,
+//   };
+//   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+// }
+
+// export const useAuth = (): AuthContextType => {
+//   const ctx = useContext(AuthContext);
+//   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+//   return ctx;
+// };
+
+// export const useRequireAuth = (redirectTo = '/login'): boolean => {
+//   const { isLoggedIn, isLoading } = useAuth();
+//   useEffect(() => { if (!isLoading && !isLoggedIn) router.replace(redirectTo); }, [isLoggedIn, isLoading, redirectTo]);
+//   return isLoggedIn;
+// };
+// export const useRequirePatient = (redirectTo = '/login'): boolean => {
+//   const { isLoggedIn, userRole, isLoading } = useAuth();
+//   useEffect(() => { if (!isLoading) { if (!isLoggedIn) router.replace(redirectTo); else if (userRole !== 'patient') router.replace('/(tabs)/doctor-dashboard'); } }, [isLoggedIn, userRole, isLoading, redirectTo]);
+//   return isLoggedIn && userRole === 'patient';
+// };
+// export const useRequireDoctor = (redirectTo = '/login'): boolean => {
+//   const { isLoggedIn, userRole, isLoading } = useAuth();
+//   useEffect(() => { if (!isLoading) { if (!isLoggedIn) router.replace(redirectTo); else if (userRole !== 'doctor') router.replace('/(tabs)/patient-dashboard'); } }, [isLoggedIn, userRole, isLoading, redirectTo]);
+//   return isLoggedIn && userRole === 'doctor';
+// };
+
 import React, {
   createContext, useContext, useState, useEffect,
   ReactNode, useCallback, useRef,
@@ -1443,6 +1654,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setIsFirstLogin(firstFlag === 'true');
         });
         await updateLastActive();
+
+        // 🔔 Restore notification after successful auth check (for returning patients)
+        if (role === 'patient' && firstFlag !== 'true') {
+          setTimeout(async () => {
+            try {
+              const { sosService } = await import('../services/SOSService');
+              await sosService.restoreNotificationAfterLogin();
+            } catch (err) {
+              console.log('Could not restore notification on auth check:', err);
+            }
+          }, 1500);
+        }
       } else clearState();
     } catch { clearState(); }
     finally { safe(() => setIsLoading(false)); }
@@ -1456,22 +1679,26 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch { }
   }, []);
 
-  // ── LOGIN — key fix for doctor 403 ───────────────────────────────────────
-  // Problem: ApiService.setToken() was being called in register.tsx AFTER
-  // login() returned, but the doctor-dashboard was already firing
-  // getDoctorProfile() with whatever token was cached. We now set the token
-  // in AsyncStorage FIRST (synchronously before any state update) so that
-  // any API call that fires immediately gets the correct token.
+  // ── LOGIN — with SOS data clearing ───────────────────────────────────────
   const login = async (token: string, role: 'patient' | 'doctor', userDataParam?: UserData): Promise<void> => {
     if (!token || !role) throw new Error('Invalid credentials');
 
     // 1. CLEAR old storage completely
     await clearStorage();
     safe(() => clearState());
+
+    // 2. Explicitly clear SOS data to remove old patient's notification
+    try {
+      const { sosService } = await import('../services/SOSService');
+      await sosService.clearSOSData();
+      console.log('🧹 Cleared old SOS data before login');
+    } catch (err) {
+      console.log('Could not clear SOS data:', err);
+    }
+
     await new Promise(r => setTimeout(r, 50));
 
-    // 2. Write new token FIRST — before any state or navigation
-    //    This ensures any API call that fires immediately uses the right token
+    // 3. Write new token FIRST — before any state or navigation
     await AsyncStorage.setItem(KEYS.TOKEN, token);
     await AsyncStorage.setItem(KEYS.USER_ROLE, role);
     await updateLastActive();
@@ -1483,16 +1710,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const firstLogin = role === 'patient' ? !(userDataParam?.hasMedicalForm) : false;
     await AsyncStorage.setItem(KEYS.FIRST_LOGIN, firstLogin ? 'true' : 'false');
 
-    // 3. Update state
+    // 4. Update state
     safe(() => {
       setIsLoggedIn(true); setUserRole(role);
       setUserData(userDataParam ?? null); setIsFirstLogin(firstLogin);
     });
 
-    // 4. Brief tick for React to flush state
+    // 5. DO NOT restore notification here - wait for medical form or dashboard
+    // The notification will be created when:
+    // - New patient submits medical form (first login)
+    // - Returning patient loads dashboard (hasMedicalForm = true)
+
+    // 6. Brief tick for React to flush state
     await new Promise(r => setTimeout(r, 100));
 
-    // 5. Navigate
+    // 7. Navigate
     if (role === 'patient') {
       router.replace(firstLogin ? '/(tabs)/patient-medicalForm' : '/(tabs)/patient-dashboard');
     } else {
@@ -1501,7 +1733,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const logout = async (): Promise<void> => {
-    await clearStorage(); clearState(); router.replace('/login');
+    // Clear SOS notification data first
+    try {
+      const { sosService } = await import('../services/SOSService');
+      await sosService.clearSOSData();
+      console.log('🧹 Cleared SOS data on logout');
+    } catch (err) {
+      console.log('Could not clear SOS data:', err);
+    }
+
+    await clearStorage();
+    clearState();
+    router.replace('/login');
   };
 
   // ── completeFirstLogin — no isLoading wrapper (prevents crash) ────────────

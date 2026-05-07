@@ -1807,6 +1807,1173 @@
 
 // export default PatientMedicalForm;
 
+// import React, { useEffect, useState, useRef } from 'react';
+// import {
+//   ScrollView, StyleSheet, Text, TextInput, View,
+//   TouchableOpacity, KeyboardAvoidingView, Platform,
+//   Keyboard, TouchableWithoutFeedback, Alert, ActivityIndicator,
+// } from 'react-native';
+// import { useForm, Controller } from 'react-hook-form';
+// import { Picker } from '@react-native-picker/picker';
+// import { useAuth } from '../../contexts/AuthContext';
+// import ApiService from '../../services/api';
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { router } from 'expo-router';
+// import { sosService } from '../../services/SOSService';
+
+// interface FormValues {
+//   fullName: string;
+//   email: string;
+//   phone: string;
+//   dateOfBirth: string;
+//   gender: string;
+//   addressStreet: string;
+//   addressCity: string;
+//   addressState: string;
+//   addressPincode: string;
+//   addressCountry: string;
+//   bloodGroup: string;
+//   isDiabetic: boolean;
+//   diabetesType?: string;
+//   hasThyroid: boolean;
+//   thyroidCondition?: string;
+//   medicationAllergies: string;
+//   comorbidConditions: string;
+//   chronicDiseases: string;
+//   currentMedications: string;
+//   pastSurgeries: string;
+//   majorSurgeriesOrIllness: string;
+//   previousInterventions: string;
+//   bloodThinner: boolean;
+//   bloodThinnerDetails?: string;
+//   emergencyName: string;
+//   emergencyRelationship: string;
+//   emergencyPhone: string;
+// }
+
+// interface PatientMedicalFormProps {
+//   onSave?: () => void;
+//   onClose?: () => void;
+// }
+
+// const PatientMedicalForm: React.FC<PatientMedicalFormProps> = ({ onSave, onClose }) => {
+//   const [isLoading, setIsLoading] = useState(true);
+//   const [isSubmitting, setIsSubmitting] = useState(false);
+//   const [isEditMode, setIsEditMode] = useState(false);
+//   const hasPopulated = useRef(false);
+
+//   const { completeFirstLogin, userData, refreshUserData } = useAuth();
+
+//   const { control, handleSubmit, watch, reset, formState: { errors } } = useForm<FormValues>({
+//     defaultValues: {
+//       fullName: '', email: '', phone: '', dateOfBirth: '', gender: '',
+//       addressStreet: '', addressCity: '', addressState: '',
+//       addressPincode: '', addressCountry: 'India',
+//       bloodGroup: '',
+//       isDiabetic: false, diabetesType: '',
+//       hasThyroid: false, thyroidCondition: '',
+//       medicationAllergies: '', comorbidConditions: '', chronicDiseases: '',
+//       currentMedications: '', pastSurgeries: '', majorSurgeriesOrIllness: '',
+//       previousInterventions: '',
+//       bloodThinner: false, bloodThinnerDetails: '',
+//       emergencyName: '', emergencyRelationship: '', emergencyPhone: '',
+//     },
+//   });
+
+//   const watchIsDiabetic = watch('isDiabetic', false);
+//   const watchHasThyroid = watch('hasThyroid', false);
+//   const watchBloodThinner = watch('bloodThinner', false);
+
+//   useEffect(() => {
+//     if (hasPopulated.current) return;
+
+//     const fetchForm = async () => {
+//       setIsLoading(true);
+//       try {
+//         let storedUser: any = userData;
+//         if (!storedUser) {
+//           const raw = await AsyncStorage.getItem('userData');
+//           if (raw) storedUser = JSON.parse(raw);
+//         }
+
+//         let fetchedForm: any = null;
+//         try {
+//           const res = await ApiService.getMedicalForm();
+//           if (res?.success && res?.data && res.data.personalInfo) {
+//             fetchedForm = res.data;
+//             setIsEditMode(true);
+//           }
+//         } catch (err: any) {
+//           console.log('No existing medical form — starting fresh:', err?.message);
+//         }
+
+//         if (fetchedForm) {
+//           let formattedDob = '';
+//           if (fetchedForm.personalInfo?.dateOfBirth) {
+//             try {
+//               formattedDob = new Date(fetchedForm.personalInfo.dateOfBirth).toISOString().split('T')[0];
+//             } catch { }
+//           }
+
+//           reset({
+//             fullName: storedUser?.name || fetchedForm.personalInfo?.fullName || '',
+//             email: storedUser?.email || fetchedForm.personalInfo?.email || '',
+//             phone: fetchedForm.personalInfo?.phone || storedUser?.phone || '',
+//             dateOfBirth: formattedDob,
+//             gender: fetchedForm.personalInfo?.gender || '',
+//             addressStreet: fetchedForm.personalInfo?.address?.street || '',
+//             addressCity: fetchedForm.personalInfo?.address?.city || '',
+//             addressState: fetchedForm.personalInfo?.address?.state || '',
+//             addressPincode: fetchedForm.personalInfo?.address?.pincode || '',
+//             addressCountry: fetchedForm.personalInfo?.address?.country || 'India',
+//             bloodGroup: fetchedForm.personalInfo?.bloodGroup || storedUser?.bloodGroup || '',
+//             isDiabetic: fetchedForm.medicalConditions?.isDiabetic || false,
+//             diabetesType: fetchedForm.medicalConditions?.diabetesType || '',
+//             hasThyroid: fetchedForm.medicalConditions?.hasThyroid || false,
+//             thyroidCondition: fetchedForm.medicalConditions?.thyroidCondition || '',
+//             medicationAllergies: (fetchedForm.medicalConditions?.medicationAllergies || [])
+//               .map((a: any) => a.medication || a).join(', '),
+//             comorbidConditions: (fetchedForm.medicalConditions?.comorbidConditions || []).join(', '),
+//             chronicDiseases: (fetchedForm.medicalConditions?.chronicDiseases || []).join(', '),
+//             currentMedications: (fetchedForm.medications?.currentMedications || [])
+//               .map((m: any) => `${m.name}${m.dosage ? ' ' + m.dosage : ''}`).join(', '),
+//             pastSurgeries: (fetchedForm.surgicalHistory?.pastSurgeries || [])
+//               .map((s: any) => s.surgery || s).join(', '),
+//             majorSurgeriesOrIllness: (fetchedForm.surgicalHistory?.majorIllnesses || [])
+//               .map((i: any) => i.illness || i).join(', '),
+//             previousInterventions: (fetchedForm.surgicalHistory?.previousInterventions || [])
+//               .map((i: any) => i.name || i).join(', '),
+//             bloodThinner: (fetchedForm.medications?.bloodThinnerHistory?.length || 0) > 0,
+//             bloodThinnerDetails: (fetchedForm.medications?.bloodThinnerHistory || [])
+//               .map((b: any) => `${b.name}${b.reason ? ' - ' + b.reason : ''}`).join(', '),
+//             emergencyName: fetchedForm.emergencyContact?.name || '',
+//             emergencyRelationship: fetchedForm.emergencyContact?.relationship || '',
+//             emergencyPhone: fetchedForm.emergencyContact?.phone || '',
+//           });
+//         } else {
+//           reset(prev => ({
+//             ...prev,
+//             fullName: storedUser?.name || prev.fullName,
+//             email: storedUser?.email || prev.email,
+//             bloodGroup: storedUser?.bloodGroup || prev.bloodGroup,
+//           }));
+//         }
+
+//         hasPopulated.current = true;
+//       } catch (outerErr) {
+//         console.error('fetchForm unexpected error:', outerErr);
+//         hasPopulated.current = true;
+//       } finally {
+//         setIsLoading(false);
+//       }
+//     };
+
+//     fetchForm();
+//   }, []);
+
+//   const refreshQRCode = async () => {
+//     try { await ApiService.refreshQRCode(); } catch { }
+//   };
+
+//   const onSubmit = async (data: FormValues) => {
+//     setIsSubmitting(true);
+//     try {
+//       const split = (str: string) =>
+//         str.split(',').map(s => s.trim()).filter(Boolean);
+
+//       const formattedData = {
+//         personalInfo: {
+//           fullName: data.fullName,
+//           email: data.email,
+//           phone: data.phone,
+//           dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+//           gender: data.gender,
+//           bloodGroup: data.bloodGroup,
+//           address: {
+//             street: data.addressStreet,
+//             city: data.addressCity,
+//             state: data.addressState,
+//             pincode: data.addressPincode,
+//             country: data.addressCountry || 'India',
+//           },
+//         },
+//         medicalConditions: {
+//           isDiabetic: data.isDiabetic,
+//           diabetesType: data.diabetesType || null,
+//           hasThyroid: data.hasThyroid,
+//           thyroidCondition: data.thyroidCondition || null,
+//           comorbidConditions: split(data.comorbidConditions),
+//           chronicDiseases: split(data.chronicDiseases),
+//           medicationAllergies: split(data.medicationAllergies).map(a => ({
+//             medication: a, reaction: 'Unknown', severity: 'Moderate',
+//           })),
+//         },
+//         medications: {
+//           currentMedications: split(data.currentMedications).map(med => ({
+//             name: med, dosage: 'As prescribed', frequency: 'As directed', isActive: true,
+//           })),
+//           bloodThinnerHistory: data.bloodThinner ? [{
+//             name: data.bloodThinnerDetails || 'Blood thinner',
+//             type: 'Anticoagulant',
+//             duration: 'Ongoing',
+//             reason: 'As prescribed',
+//           }] : [],
+//         },
+//         surgicalHistory: {
+//           pastSurgeries: split(data.pastSurgeries).map(s => ({
+//             surgery: s, date: new Date(), hospital: 'Not specified', surgeon: 'Not specified',
+//           })),
+//           majorIllnesses: split(data.majorSurgeriesOrIllness).map(i => ({
+//             illness: i, year: new Date().getFullYear().toString(),
+//             hospital: 'Not specified', notes: '',
+//           })),
+//           previousInterventions: split(data.previousInterventions).map(i => ({
+//             name: i, date: new Date(), hospital: 'Not specified',
+//           })),
+//         },
+//         emergencyContact: {
+//           name: data.emergencyName,
+//           relationship: data.emergencyRelationship,
+//           phone: data.emergencyPhone,
+//         },
+//         completionStatus: { isComplete: true, completionDate: new Date() },
+//       };
+
+//       const response = await ApiService.submitMedicalForm(formattedData);
+
+//       if (response?.success) {
+//         await refreshQRCode();
+
+//         // 🔔 CRITICAL: Setup SOS notification with medical data
+//         console.log('🔔 Setting up SOS notification...');
+//         await sosService.setupAfterFormSave({
+//           patientName: data.fullName,
+//           patientId: userData?.patientId || '',
+//           bloodGroup: data.bloodGroup,
+//           allergies: split(data.medicationAllergies),
+//           emergencyName: data.emergencyName,
+//           emergencyPhone: data.emergencyPhone,
+//           chronicDiseases: split(data.chronicDiseases),
+//           isDiabetic: data.isDiabetic,
+//           qrCodeDataUri: '', // Will be generated separately
+//         });
+//         console.log('🔔 SOS notification setup complete');
+
+//         Alert.alert(
+//           'Success',
+//           isEditMode ? 'Medical profile updated successfully!' : 'Medical profile saved successfully!',
+//           [{
+//             text: 'OK',
+//             onPress: async () => {
+//               try {
+//                 if (!isEditMode) {
+//                   await completeFirstLogin();
+//                   await refreshUserData();
+//                   await new Promise(resolve => setTimeout(resolve, 500));
+//                 }
+//                 onSave?.();
+//                 onClose?.();
+//                 router.replace('/(tabs)/patient-dashboard');
+//               } catch (error) {
+//                 console.error('Navigation error:', error);
+//                 router.replace('/(tabs)/patient-dashboard');
+//               }
+//             },
+//           }],
+//         );
+//       } else {
+//         Alert.alert('Error', response?.message || 'Failed to submit. Please try again.');
+//       }
+//     } catch (error: any) {
+//       console.error('Submit error:', error);
+//       Alert.alert('Error', error.message || 'Submission failed. Check your connection.');
+//     } finally {
+//       setIsSubmitting(false);
+//     }
+//   };
+
+//   const handleSave = handleSubmit(onSubmit);
+
+//   const renderRadio = (value: boolean, label: string, onPress: () => void) => (
+//     <TouchableOpacity style={st.radioContainer} onPress={onPress} disabled={isSubmitting}>
+//       <View style={[st.radioButton, value && st.radioButtonSelected]}>
+//         {value && <View style={st.radioInner} />}
+//       </View>
+//       <Text style={st.radioLabel}>{label}</Text>
+//     </TouchableOpacity>
+//   );
+
+//   if (isLoading) {
+//     return (
+//       <View style={st.loadingContainer}>
+//         <ActivityIndicator size="large" color="#2563EB" />
+//         <Text style={st.loadingText}>Loading your information…</Text>
+//       </View>
+//     );
+//   }
+
+//   return (
+//     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+//       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+//         <ScrollView
+//           contentContainerStyle={st.container}
+//           keyboardShouldPersistTaps="handled"
+//           showsVerticalScrollIndicator={false}
+//         >
+//           <View style={st.header}>
+//             <Text style={st.heading}>
+//               {isEditMode ? 'Edit Medical Profile' : 'Complete Your Medical Profile'}
+//             </Text>
+//             <Text style={st.subheading}>
+//               Fill in your medical details to help doctors understand your health history.
+//             </Text>
+//           </View>
+
+//           {/* PATIENT DEMOGRAPHICS */}
+//           <Text style={st.sectionTitle}>PATIENT DEMOGRAPHICS</Text>
+
+//           <Text style={st.label}>Full Name <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="fullName"
+//             rules={{ required: 'Full name is required' }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <TextInput style={[st.input, error && st.inputErr]} placeholder="Enter your full name"
+//                 onChangeText={onChange} value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.label}>Email <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="email"
+//             rules={{ required: 'Email is required', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Invalid email' } }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <TextInput style={[st.input, error && st.inputErr]} placeholder="your@email.com"
+//                 onChangeText={onChange} value={value} keyboardType="email-address" autoCapitalize="none"
+//                 editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.label}>Phone Number</Text>
+//           <Controller control={control} name="phone"
+//             render={({ field: { onChange, value } }) => (
+//               <TextInput style={st.input} placeholder="Phone number" onChangeText={onChange}
+//                 value={value} keyboardType="phone-pad" editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//             )} />
+
+//           <Text style={st.label}>Date of Birth</Text>
+//           <Controller control={control} name="dateOfBirth"
+//             render={({ field: { onChange, value } }) => (
+//               <TextInput style={st.input} placeholder="YYYY-MM-DD" onChangeText={onChange}
+//                 value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//             )} />
+
+//           <Text style={st.label}>Gender</Text>
+//           <Controller control={control} name="gender"
+//             render={({ field: { onChange, value } }) => (
+//               <View style={st.pickerWrap}>
+//                 <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                   <Picker.Item label="Select Gender" value="" />
+//                   <Picker.Item label="Male" value="Male" />
+//                   <Picker.Item label="Female" value="Female" />
+//                   <Picker.Item label="Other" value="Other" />
+//                 </Picker>
+//               </View>
+//             )} />
+
+//           {/* ADDRESS */}
+//           <Text style={st.sectionTitle}>ADDRESS</Text>
+
+//           {[
+//             { name: 'addressStreet', label: 'Street Address', ph: 'Street address' },
+//             { name: 'addressCity', label: 'City', ph: 'City' },
+//             { name: 'addressState', label: 'State', ph: 'State' },
+//             { name: 'addressPincode', label: 'Pincode', ph: 'Pincode', kbType: 'numeric' as const },
+//             { name: 'addressCountry', label: 'Country', ph: 'Country' },
+//           ].map(({ name, label, ph, kbType }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.label}>{label}</Text>
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF"
+//                     keyboardType={kbType} />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* MEDICAL PROFILE */}
+//           <Text style={st.sectionTitle}>MEDICAL PROFILE</Text>
+
+//           <Text style={st.label}>Blood Group <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="bloodGroup"
+//             rules={{ required: 'Blood group is required' }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <View style={[st.pickerWrap, error && st.inputErr]}>
+//                 <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                   <Picker.Item label="Select Blood Group" value="" />
+//                   {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+//                     <Picker.Item key={bg} label={bg} value={bg} />
+//                   ))}
+//                 </Picker>
+//               </View>
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.subLabel}>Diabetic</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="isDiabetic"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchIsDiabetic && (
+//             <Controller control={control} name="diabetesType"
+//               render={({ field: { onChange, value } }) => (
+//                 <View style={st.pickerWrap}>
+//                   <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                     <Picker.Item label="Select Diabetes Type" value="" />
+//                     {['Type 1', 'Type 2', 'Gestational', 'Pre-diabetic'].map(t => (
+//                       <Picker.Item key={t} label={t} value={t} />
+//                     ))}
+//                   </Picker>
+//                 </View>
+//               )} />
+//           )}
+
+//           <Text style={st.subLabel}>Thyroid Condition</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="hasThyroid"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchHasThyroid && (
+//             <Controller control={control} name="thyroidCondition"
+//               render={({ field: { onChange, value } }) => (
+//                 <View style={st.pickerWrap}>
+//                   <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                     <Picker.Item label="Select Thyroid Condition" value="" />
+//                     {['Hypothyroid', 'Hyperthyroid', 'Goiter', 'Thyroid Nodules'].map(t => (
+//                       <Picker.Item key={t} label={t} value={t} />
+//                     ))}
+//                   </Picker>
+//                 </View>
+//               )} />
+//           )}
+
+//           {/* Text area sections */}
+//           {[
+//             { section: 'ALLERGIES', name: 'medicationAllergies', label: 'Medication Allergies', ph: 'e.g., Penicillin, Sulfa', hint: 'Separate with commas' },
+//             { section: 'COMORBID CONDITIONS', name: 'comorbidConditions', label: 'Comorbid Conditions', ph: 'e.g., Hypertension, High Cholesterol', hint: 'Separate with commas' },
+//             { section: 'CHRONIC DISEASES', name: 'chronicDiseases', label: 'Chronic Diseases', ph: 'e.g., Type 2 Diabetes', hint: 'Separate with commas' },
+//             { section: 'CURRENT MEDICATIONS', name: 'currentMedications', label: 'Current Medications', ph: 'e.g., Metformin 500mg, Lisinopril 10mg', hint: 'Name and dosage, separated by commas' },
+//             { section: 'PAST SURGERIES', name: 'pastSurgeries', label: 'Past Surgeries', ph: 'e.g., Appendectomy (June 2015)', hint: 'Separate with commas' },
+//             { section: 'MAJOR SURGERIES / ILLNESS', name: 'majorSurgeriesOrIllness', label: 'Major Surgeries / Illness', ph: 'e.g., Severe Dengue (2019)', hint: 'Separate with commas' },
+//             { section: 'PREVIOUS INTERVENTIONS', name: 'previousInterventions', label: 'Previous Interventions', ph: 'e.g., Coronary Angiography', hint: 'Separate with commas' },
+//           ].map(({ section, name, label, ph, hint }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.sectionTitle}>{section}</Text>
+//               {hint && <Text style={st.hint}>{hint}</Text>}
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} multiline editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* BLOOD THINNER */}
+//           <Text style={st.sectionTitle}>BLOOD THINNER HISTORY</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="bloodThinner"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchBloodThinner && (
+//             <Controller control={control} name="bloodThinnerDetails"
+//               render={({ field: { onChange, value } }) => (
+//                 <TextInput style={st.input} placeholder="Blood thinner name and reason"
+//                   onChangeText={onChange} value={value} multiline editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               )} />
+//           )}
+
+//           {/* EMERGENCY CONTACT */}
+//           <Text style={st.sectionTitle}>EMERGENCY CONTACT</Text>
+//           {[
+//             { name: 'emergencyName', label: 'Contact Name', ph: 'Emergency contact name' },
+//             { name: 'emergencyRelationship', label: 'Relationship', ph: 'e.g., Spouse, Parent' },
+//             { name: 'emergencyPhone', label: 'Phone Number', ph: 'Emergency contact phone', kbType: 'phone-pad' as const },
+//           ].map(({ name, label, ph, kbType }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.label}>{label}</Text>
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF"
+//                     keyboardType={kbType} />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* Buttons */}
+//           <View style={st.btnRow}>
+//             {onClose && (
+//               <TouchableOpacity style={st.cancelBtn} onPress={onClose} disabled={isSubmitting}>
+//                 <Text style={st.cancelTxt}>Cancel</Text>
+//               </TouchableOpacity>
+//             )}
+//             <TouchableOpacity style={[st.saveBtn, isSubmitting && st.saveBtnOff]} onPress={handleSave} disabled={isSubmitting}>
+//               {isSubmitting
+//                 ? <ActivityIndicator color="#FFF" size="small" />
+//                 : <Text style={st.saveTxt}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
+//               }
+//             </TouchableOpacity>
+//           </View>
+
+//           <Text style={st.note}>
+//             This information generates your medical summary and QR code.
+//           </Text>
+//         </ScrollView>
+//       </KeyboardAvoidingView>
+//     </TouchableWithoutFeedback>
+//   );
+// };
+
+// const st = StyleSheet.create({
+//   container: { flexGrow: 1, padding: 20, backgroundColor: '#F8FAFC' },
+//   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
+//   loadingText: { marginTop: 12, fontSize: 16, color: '#64748B' },
+//   header: { marginBottom: 24 },
+//   heading: { fontSize: 26, fontWeight: '700', color: '#1E293B', marginBottom: 8 },
+//   subheading: { fontSize: 14, color: '#64748B', lineHeight: 20 },
+//   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#2563EB', marginTop: 24, marginBottom: 12, textTransform: 'uppercase' },
+//   label: { fontSize: 15, fontWeight: '600', color: '#374151', marginTop: 10, marginBottom: 4 },
+//   subLabel: { fontSize: 14, fontWeight: '500', color: '#4B5563', marginTop: 8, marginBottom: 4 },
+//   hint: { fontSize: 12, color: '#6B7280', marginBottom: 4, fontStyle: 'italic' },
+//   req: { color: '#EF4444' },
+//   input: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, color: '#1F2937', marginBottom: 8 },
+//   inputErr: { borderColor: '#EF4444' },
+//   errTxt: { color: '#EF4444', fontSize: 12, marginBottom: 8, marginLeft: 4 },
+//   pickerWrap: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, marginBottom: 8, overflow: 'hidden' },
+//   picker: { height: 50, width: '100%', color: '#1F2937' },
+//   radioGroup: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+//   radioContainer: { flexDirection: 'row', alignItems: 'center', marginRight: 24, paddingVertical: 8 },
+//   radioButton: { height: 20, width: 20, borderRadius: 10, borderWidth: 2, borderColor: '#9CA3AF', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+//   radioButtonSelected: { borderColor: '#2563EB' },
+//   radioInner: { height: 10, width: 10, borderRadius: 5, backgroundColor: '#2563EB' },
+//   radioLabel: { fontSize: 15, color: '#374151' },
+//   btnRow: { flexDirection: 'row', gap: 12, marginTop: 32, marginBottom: 16 },
+//   saveBtn: { flex: 2, backgroundColor: '#2563EB', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+//   saveBtnOff: { backgroundColor: '#9CA3AF' },
+//   saveTxt: { color: '#FFF', fontSize: 17, fontWeight: '600' },
+//   cancelBtn: { flex: 1, backgroundColor: '#F1F5F9', paddingVertical: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
+//   cancelTxt: { color: '#64748B', fontSize: 17, fontWeight: '600' },
+//   note: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+// });
+
+// export default PatientMedicalForm;
+
+
+
+
+
+// import React, { useEffect, useState, useRef } from 'react';
+// import {
+//   ScrollView, StyleSheet, Text, TextInput, View,
+//   TouchableOpacity, KeyboardAvoidingView, Platform,
+//   Keyboard, TouchableWithoutFeedback, Alert, ActivityIndicator,
+// } from 'react-native';
+// import { useForm, Controller } from 'react-hook-form';
+// import { Picker } from '@react-native-picker/picker';
+// import { useAuth } from '../../contexts/AuthContext';
+// import ApiService from '../../services/api';
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { router } from 'expo-router';
+// import { sosService } from '../../services/SOSService';
+
+// interface FormValues {
+//   fullName: string;
+//   email: string;
+//   phone: string;
+//   dateOfBirth: string;
+//   gender: string;
+//   addressStreet: string;
+//   addressCity: string;
+//   addressState: string;
+//   addressPincode: string;
+//   addressCountry: string;
+//   bloodGroup: string;
+//   isDiabetic: boolean;
+//   diabetesType?: string;
+//   hasThyroid: boolean;
+//   thyroidCondition?: string;
+//   medicationAllergies: string;
+//   comorbidConditions: string;
+//   chronicDiseases: string;
+//   currentMedications: string;
+//   pastSurgeries: string;
+//   majorSurgeriesOrIllness: string;
+//   previousInterventions: string;
+//   bloodThinner: boolean;
+//   bloodThinnerDetails?: string;
+//   emergencyName: string;
+//   emergencyRelationship: string;
+//   emergencyPhone: string;
+// }
+
+// interface PatientMedicalFormProps {
+//   onSave?: () => void;
+//   onClose?: () => void;
+// }
+
+// const PatientMedicalForm: React.FC<PatientMedicalFormProps> = ({ onSave, onClose }) => {
+//   const [isLoading, setIsLoading] = useState(true);
+//   const [isSubmitting, setIsSubmitting] = useState(false);
+//   const [isEditMode, setIsEditMode] = useState(false);
+//   const hasPopulated = useRef(false);
+
+//   const { completeFirstLogin, userData, refreshUserData } = useAuth();
+
+//   const { control, handleSubmit, watch, reset, formState: { errors } } = useForm<FormValues>({
+//     defaultValues: {
+//       fullName: '', email: '', phone: '', dateOfBirth: '', gender: '',
+//       addressStreet: '', addressCity: '', addressState: '',
+//       addressPincode: '', addressCountry: 'India',
+//       bloodGroup: '',
+//       isDiabetic: false, diabetesType: '',
+//       hasThyroid: false, thyroidCondition: '',
+//       medicationAllergies: '', comorbidConditions: '', chronicDiseases: '',
+//       currentMedications: '', pastSurgeries: '', majorSurgeriesOrIllness: '',
+//       previousInterventions: '',
+//       bloodThinner: false, bloodThinnerDetails: '',
+//       emergencyName: '', emergencyRelationship: '', emergencyPhone: '',
+//     },
+//   });
+
+//   const watchIsDiabetic = watch('isDiabetic', false);
+//   const watchHasThyroid = watch('hasThyroid', false);
+//   const watchBloodThinner = watch('bloodThinner', false);
+
+//   useEffect(() => {
+//     if (hasPopulated.current) return;
+
+//     const fetchForm = async () => {
+//       setIsLoading(true);
+//       try {
+//         let storedUser: any = userData;
+//         if (!storedUser) {
+//           const raw = await AsyncStorage.getItem('userData');
+//           if (raw) storedUser = JSON.parse(raw);
+//         }
+
+//         let fetchedForm: any = null;
+//         try {
+//           const res = await ApiService.getMedicalForm();
+//           if (res?.success && res?.data && res.data.personalInfo) {
+//             fetchedForm = res.data;
+//             setIsEditMode(true);
+//           }
+//         } catch (err: any) {
+//           console.log('No existing medical form — starting fresh:', err?.message);
+//         }
+
+//         if (fetchedForm) {
+//           let formattedDob = '';
+//           if (fetchedForm.personalInfo?.dateOfBirth) {
+//             try {
+//               formattedDob = new Date(fetchedForm.personalInfo.dateOfBirth).toISOString().split('T')[0];
+//             } catch { }
+//           }
+
+//           reset({
+//             fullName: storedUser?.name || fetchedForm.personalInfo?.fullName || '',
+//             email: storedUser?.email || fetchedForm.personalInfo?.email || '',
+//             phone: fetchedForm.personalInfo?.phone || storedUser?.phone || '',
+//             dateOfBirth: formattedDob,
+//             gender: fetchedForm.personalInfo?.gender || '',
+//             addressStreet: fetchedForm.personalInfo?.address?.street || '',
+//             addressCity: fetchedForm.personalInfo?.address?.city || '',
+//             addressState: fetchedForm.personalInfo?.address?.state || '',
+//             addressPincode: fetchedForm.personalInfo?.address?.pincode || '',
+//             addressCountry: fetchedForm.personalInfo?.address?.country || 'India',
+//             bloodGroup: fetchedForm.personalInfo?.bloodGroup || storedUser?.bloodGroup || '',
+//             isDiabetic: fetchedForm.medicalConditions?.isDiabetic || false,
+//             diabetesType: fetchedForm.medicalConditions?.diabetesType || '',
+//             hasThyroid: fetchedForm.medicalConditions?.hasThyroid || false,
+//             thyroidCondition: fetchedForm.medicalConditions?.thyroidCondition || '',
+//             medicationAllergies: (fetchedForm.medicalConditions?.medicationAllergies || [])
+//               .map((a: any) => a.medication || a).join(', '),
+//             comorbidConditions: (fetchedForm.medicalConditions?.comorbidConditions || []).join(', '),
+//             chronicDiseases: (fetchedForm.medicalConditions?.chronicDiseases || []).join(', '),
+//             currentMedications: (fetchedForm.medications?.currentMedications || [])
+//               .map((m: any) => `${m.name}${m.dosage ? ' ' + m.dosage : ''}`).join(', '),
+//             pastSurgeries: (fetchedForm.surgicalHistory?.pastSurgeries || [])
+//               .map((s: any) => s.surgery || s).join(', '),
+//             majorSurgeriesOrIllness: (fetchedForm.surgicalHistory?.majorIllnesses || [])
+//               .map((i: any) => i.illness || i).join(', '),
+//             previousInterventions: (fetchedForm.surgicalHistory?.previousInterventions || [])
+//               .map((i: any) => i.name || i).join(', '),
+//             bloodThinner: (fetchedForm.medications?.bloodThinnerHistory?.length || 0) > 0,
+//             bloodThinnerDetails: (fetchedForm.medications?.bloodThinnerHistory || [])
+//               .map((b: any) => `${b.name}${b.reason ? ' - ' + b.reason : ''}`).join(', '),
+//             emergencyName: fetchedForm.emergencyContact?.name || '',
+//             emergencyRelationship: fetchedForm.emergencyContact?.relationship || '',
+//             emergencyPhone: fetchedForm.emergencyContact?.phone || '',
+//           });
+//         } else {
+//           reset(prev => ({
+//             ...prev,
+//             fullName: storedUser?.name || prev.fullName,
+//             email: storedUser?.email || prev.email,
+//             bloodGroup: storedUser?.bloodGroup || prev.bloodGroup,
+//           }));
+//         }
+
+//         hasPopulated.current = true;
+//       } catch (outerErr) {
+//         console.error('fetchForm unexpected error:', outerErr);
+//         hasPopulated.current = true;
+//       } finally {
+//         setIsLoading(false);
+//       }
+//     };
+
+//     fetchForm();
+//   }, []);
+
+//   const refreshQRCode = async () => {
+//     try { await ApiService.refreshQRCode(); } catch { }
+//   };
+
+//   const onSubmit = async (data: FormValues) => {
+//     setIsSubmitting(true);
+//     try {
+//       const split = (str: string) =>
+//         str.split(',').map(s => s.trim()).filter(Boolean);
+
+//       const formattedData = {
+//         personalInfo: {
+//           fullName: data.fullName,
+//           email: data.email,
+//           phone: data.phone,
+//           dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : null,
+//           gender: data.gender,
+//           bloodGroup: data.bloodGroup,
+//           address: {
+//             street: data.addressStreet,
+//             city: data.addressCity,
+//             state: data.addressState,
+//             pincode: data.addressPincode,
+//             country: data.addressCountry || 'India',
+//           },
+//         },
+//         medicalConditions: {
+//           isDiabetic: data.isDiabetic,
+//           diabetesType: data.diabetesType || null,
+//           hasThyroid: data.hasThyroid,
+//           thyroidCondition: data.thyroidCondition || null,
+//           comorbidConditions: split(data.comorbidConditions),
+//           chronicDiseases: split(data.chronicDiseases),
+//           medicationAllergies: split(data.medicationAllergies).map(a => ({
+//             medication: a, reaction: 'Unknown', severity: 'Moderate',
+//           })),
+//         },
+//         medications: {
+//           currentMedications: split(data.currentMedications).map(med => ({
+//             name: med, dosage: 'As prescribed', frequency: 'As directed', isActive: true,
+//           })),
+//           bloodThinnerHistory: data.bloodThinner ? [{
+//             name: data.bloodThinnerDetails || 'Blood thinner',
+//             type: 'Anticoagulant',
+//             duration: 'Ongoing',
+//             reason: 'As prescribed',
+//           }] : [],
+//         },
+//         surgicalHistory: {
+//           pastSurgeries: split(data.pastSurgeries).map(s => ({
+//             surgery: s, date: new Date(), hospital: 'Not specified', surgeon: 'Not specified',
+//           })),
+//           majorIllnesses: split(data.majorSurgeriesOrIllness).map(i => ({
+//             illness: i, year: new Date().getFullYear().toString(),
+//             hospital: 'Not specified', notes: '',
+//           })),
+//           previousInterventions: split(data.previousInterventions).map(i => ({
+//             name: i, date: new Date(), hospital: 'Not specified',
+//           })),
+//         },
+//         emergencyContact: {
+//           name: data.emergencyName,
+//           relationship: data.emergencyRelationship,
+//           phone: data.emergencyPhone,
+//         },
+//         completionStatus: { isComplete: true, completionDate: new Date() },
+//       };
+
+//       const response = await ApiService.submitMedicalForm(formattedData);
+
+//       if (response?.success) {
+//         await refreshQRCode();
+
+//         // 🔔 Setup SOS notification with medical data
+//         console.log('🔔 Setting up SOS notification...');
+
+//         // Get fresh user data after form submission
+//         let patientId = userData?.patientId || '';
+//         let qrCodeDataUri = '';
+
+//         try {
+//           // Try to get QR code from API after refresh
+//           const profileRes = await ApiService.getPatientProfile() as any;
+//           if (profileRes.success && profileRes.data) {
+//             patientId = profileRes.data.patientId || patientId;
+//             qrCodeDataUri = profileRes.data.qrCode || '';
+//             console.log('🔔 Got QR code from profile:', qrCodeDataUri ? 'Yes' : 'No');
+//           }
+//         } catch (err) {
+//           console.log('🔔 Could not fetch fresh profile:', err);
+//         }
+
+//         // If no QR code yet, create a data URI from patient info
+//         if (!qrCodeDataUri) {
+//           qrCodeDataUri = JSON.stringify({
+//             patientId: patientId,
+//             patientName: data.fullName,
+//             bloodGroup: data.bloodGroup,
+//             timestamp: new Date().toISOString()
+//           });
+//           console.log('🔔 Created fallback QR data');
+//         }
+
+//         await sosService.setupAfterFormSave({
+//           patientName: data.fullName,
+//           patientId: patientId,
+//           bloodGroup: data.bloodGroup,
+//           allergies: split(data.medicationAllergies),
+//           emergencyName: data.emergencyName,
+//           emergencyPhone: data.emergencyPhone,
+//           chronicDiseases: split(data.chronicDiseases),
+//           isDiabetic: data.isDiabetic,
+//           qrCodeDataUri: qrCodeDataUri,
+//         });
+//         console.log('🔔 SOS notification setup complete');
+
+//         Alert.alert(
+//           'Success',
+//           isEditMode ? 'Medical profile updated successfully!' : 'Medical profile saved successfully!',
+//           [{
+//             text: 'OK',
+//             onPress: async () => {
+//               try {
+//                 if (!isEditMode) {
+//                   await completeFirstLogin();
+//                   await refreshUserData();
+//                   await new Promise(resolve => setTimeout(resolve, 500));
+//                 }
+//                 onSave?.();
+//                 onClose?.();
+//                 router.replace('/(tabs)/patient-dashboard');
+//               } catch (error) {
+//                 console.error('Navigation error:', error);
+//                 router.replace('/(tabs)/patient-dashboard');
+//               }
+//             },
+//           }],
+//         );
+//       } else {
+//         Alert.alert('Error', response?.message || 'Failed to submit. Please try again.');
+//       }
+//     } catch (error: any) {
+//       console.error('Submit error:', error);
+//       Alert.alert('Error', error.message || 'Submission failed. Check your connection.');
+//     } finally {
+//       setIsSubmitting(false);
+//     }
+//   };
+
+//   const handleSave = handleSubmit(onSubmit);
+
+//   const renderRadio = (value: boolean, label: string, onPress: () => void) => (
+//     <TouchableOpacity style={st.radioContainer} onPress={onPress} disabled={isSubmitting}>
+//       <View style={[st.radioButton, value && st.radioButtonSelected]}>
+//         {value && <View style={st.radioInner} />}
+//       </View>
+//       <Text style={st.radioLabel}>{label}</Text>
+//     </TouchableOpacity>
+//   );
+
+//   if (isLoading) {
+//     return (
+//       <View style={st.loadingContainer}>
+//         <ActivityIndicator size="large" color="#2563EB" />
+//         <Text style={st.loadingText}>Loading your information…</Text>
+//       </View>
+//     );
+//   }
+
+//   return (
+//     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+//       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+//         <ScrollView
+//           contentContainerStyle={st.container}
+//           keyboardShouldPersistTaps="handled"
+//           showsVerticalScrollIndicator={false}
+//         >
+//           <View style={st.header}>
+//             <Text style={st.heading}>
+//               {isEditMode ? 'Edit Medical Profile' : 'Complete Your Medical Profile'}
+//             </Text>
+//             <Text style={st.subheading}>
+//               Fill in your medical details to help doctors understand your health history.
+//             </Text>
+//           </View>
+
+//           {/* PATIENT DEMOGRAPHICS */}
+//           <Text style={st.sectionTitle}>PATIENT DEMOGRAPHICS</Text>
+
+//           <Text style={st.label}>Full Name <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="fullName"
+//             rules={{ required: 'Full name is required' }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <TextInput style={[st.input, error && st.inputErr]} placeholder="Enter your full name"
+//                 onChangeText={onChange} value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.label}>Email <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="email"
+//             rules={{ required: 'Email is required', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Invalid email' } }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <TextInput style={[st.input, error && st.inputErr]} placeholder="your@email.com"
+//                 onChangeText={onChange} value={value} keyboardType="email-address" autoCapitalize="none"
+//                 editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.label}>Phone Number</Text>
+//           <Controller control={control} name="phone"
+//             render={({ field: { onChange, value } }) => (
+//               <TextInput style={st.input} placeholder="Phone number" onChangeText={onChange}
+//                 value={value} keyboardType="phone-pad" editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//             )} />
+
+//           <Text style={st.label}>Date of Birth</Text>
+//           <Controller control={control} name="dateOfBirth"
+//             render={({ field: { onChange, value } }) => (
+//               <TextInput style={st.input} placeholder="YYYY-MM-DD" onChangeText={onChange}
+//                 value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//             )} />
+
+//           <Text style={st.label}>Gender</Text>
+//           <Controller control={control} name="gender"
+//             render={({ field: { onChange, value } }) => (
+//               <View style={st.pickerWrap}>
+//                 <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                   <Picker.Item label="Select Gender" value="" />
+//                   <Picker.Item label="Male" value="Male" />
+//                   <Picker.Item label="Female" value="Female" />
+//                   <Picker.Item label="Other" value="Other" />
+//                 </Picker>
+//               </View>
+//             )} />
+
+//           {/* ADDRESS */}
+//           <Text style={st.sectionTitle}>ADDRESS</Text>
+
+//           {[
+//             { name: 'addressStreet', label: 'Street Address', ph: 'Street address' },
+//             { name: 'addressCity', label: 'City', ph: 'City' },
+//             { name: 'addressState', label: 'State', ph: 'State' },
+//             { name: 'addressPincode', label: 'Pincode', ph: 'Pincode', kbType: 'numeric' as const },
+//             { name: 'addressCountry', label: 'Country', ph: 'Country' },
+//           ].map(({ name, label, ph, kbType }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.label}>{label}</Text>
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF"
+//                     keyboardType={kbType} />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* MEDICAL PROFILE */}
+//           <Text style={st.sectionTitle}>MEDICAL PROFILE</Text>
+
+//           <Text style={st.label}>Blood Group <Text style={st.req}>*</Text></Text>
+//           <Controller control={control} name="bloodGroup"
+//             rules={{ required: 'Blood group is required' }}
+//             render={({ field: { onChange, value }, fieldState: { error } }) => (<>
+//               <View style={[st.pickerWrap, error && st.inputErr]}>
+//                 <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                   <Picker.Item label="Select Blood Group" value="" />
+//                   {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+//                     <Picker.Item key={bg} label={bg} value={bg} />
+//                   ))}
+//                 </Picker>
+//               </View>
+//               {error && <Text style={st.errTxt}>{error.message}</Text>}
+//             </>)} />
+
+//           <Text style={st.subLabel}>Diabetic</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="isDiabetic"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchIsDiabetic && (
+//             <Controller control={control} name="diabetesType"
+//               render={({ field: { onChange, value } }) => (
+//                 <View style={st.pickerWrap}>
+//                   <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                     <Picker.Item label="Select Diabetes Type" value="" />
+//                     {['Type 1', 'Type 2', 'Gestational', 'Pre-diabetic'].map(t => (
+//                       <Picker.Item key={t} label={t} value={t} />
+//                     ))}
+//                   </Picker>
+//                 </View>
+//               )} />
+//           )}
+
+//           <Text style={st.subLabel}>Thyroid Condition</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="hasThyroid"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchHasThyroid && (
+//             <Controller control={control} name="thyroidCondition"
+//               render={({ field: { onChange, value } }) => (
+//                 <View style={st.pickerWrap}>
+//                   <Picker selectedValue={value} onValueChange={onChange} style={st.picker} enabled={!isSubmitting}>
+//                     <Picker.Item label="Select Thyroid Condition" value="" />
+//                     {['Hypothyroid', 'Hyperthyroid', 'Goiter', 'Thyroid Nodules'].map(t => (
+//                       <Picker.Item key={t} label={t} value={t} />
+//                     ))}
+//                   </Picker>
+//                 </View>
+//               )} />
+//           )}
+
+//           {/* Text area sections */}
+//           {[
+//             { section: 'ALLERGIES', name: 'medicationAllergies', label: 'Medication Allergies', ph: 'e.g., Penicillin, Sulfa', hint: 'Separate with commas' },
+//             { section: 'COMORBID CONDITIONS', name: 'comorbidConditions', label: 'Comorbid Conditions', ph: 'e.g., Hypertension, High Cholesterol', hint: 'Separate with commas' },
+//             { section: 'CHRONIC DISEASES', name: 'chronicDiseases', label: 'Chronic Diseases', ph: 'e.g., Type 2 Diabetes', hint: 'Separate with commas' },
+//             { section: 'CURRENT MEDICATIONS', name: 'currentMedications', label: 'Current Medications', ph: 'e.g., Metformin 500mg, Lisinopril 10mg', hint: 'Name and dosage, separated by commas' },
+//             { section: 'PAST SURGERIES', name: 'pastSurgeries', label: 'Past Surgeries', ph: 'e.g., Appendectomy (June 2015)', hint: 'Separate with commas' },
+//             { section: 'MAJOR SURGERIES / ILLNESS', name: 'majorSurgeriesOrIllness', label: 'Major Surgeries / Illness', ph: 'e.g., Severe Dengue (2019)', hint: 'Separate with commas' },
+//             { section: 'PREVIOUS INTERVENTIONS', name: 'previousInterventions', label: 'Previous Interventions', ph: 'e.g., Coronary Angiography', hint: 'Separate with commas' },
+//           ].map(({ section, name, label, ph, hint }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.sectionTitle}>{section}</Text>
+//               {hint && <Text style={st.hint}>{hint}</Text>}
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} multiline editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* BLOOD THINNER */}
+//           <Text style={st.sectionTitle}>BLOOD THINNER HISTORY</Text>
+//           <View style={st.radioGroup}>
+//             <Controller control={control} name="bloodThinner"
+//               render={({ field: { value, onChange } }) => (<>
+//                 {renderRadio(value === true, 'Yes', () => onChange(true))}
+//                 {renderRadio(value === false, 'No', () => onChange(false))}
+//               </>)} />
+//           </View>
+//           {watchBloodThinner && (
+//             <Controller control={control} name="bloodThinnerDetails"
+//               render={({ field: { onChange, value } }) => (
+//                 <TextInput style={st.input} placeholder="Blood thinner name and reason"
+//                   onChangeText={onChange} value={value} multiline editable={!isSubmitting} placeholderTextColor="#9CA3AF" />
+//               )} />
+//           )}
+
+//           {/* EMERGENCY CONTACT */}
+//           <Text style={st.sectionTitle}>EMERGENCY CONTACT</Text>
+//           {[
+//             { name: 'emergencyName', label: 'Contact Name', ph: 'Emergency contact name' },
+//             { name: 'emergencyRelationship', label: 'Relationship', ph: 'e.g., Spouse, Parent' },
+//             { name: 'emergencyPhone', label: 'Phone Number', ph: 'Emergency contact phone', kbType: 'phone-pad' as const },
+//           ].map(({ name, label, ph, kbType }) => (
+//             <React.Fragment key={name}>
+//               <Text style={st.label}>{label}</Text>
+//               <Controller control={control} name={name as any}
+//                 render={({ field: { onChange, value } }) => (
+//                   <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
+//                     value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF"
+//                     keyboardType={kbType} />
+//                 )} />
+//             </React.Fragment>
+//           ))}
+
+//           {/* Buttons */}
+//           <View style={st.btnRow}>
+//             {onClose && (
+//               <TouchableOpacity style={st.cancelBtn} onPress={onClose} disabled={isSubmitting}>
+//                 <Text style={st.cancelTxt}>Cancel</Text>
+//               </TouchableOpacity>
+//             )}
+//             <TouchableOpacity style={[st.saveBtn, isSubmitting && st.saveBtnOff]} onPress={handleSave} disabled={isSubmitting}>
+//               {isSubmitting
+//                 ? <ActivityIndicator color="#FFF" size="small" />
+//                 : <Text style={st.saveTxt}>{isEditMode ? 'Save Changes' : 'Save & Continue'}</Text>
+//               }
+//             </TouchableOpacity>
+//           </View>
+
+//           <Text style={st.note}>
+//             This information generates your medical summary and QR code.
+//           </Text>
+//         </ScrollView>
+//       </KeyboardAvoidingView>
+//     </TouchableWithoutFeedback>
+//   );
+// };
+
+// const st = StyleSheet.create({
+//   container: { flexGrow: 1, padding: 20, backgroundColor: '#F8FAFC' },
+//   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
+//   loadingText: { marginTop: 12, fontSize: 16, color: '#64748B' },
+//   header: { marginBottom: 24 },
+//   heading: { fontSize: 26, fontWeight: '700', color: '#1E293B', marginBottom: 8 },
+//   subheading: { fontSize: 14, color: '#64748B', lineHeight: 20 },
+//   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#2563EB', marginTop: 24, marginBottom: 12, textTransform: 'uppercase' },
+//   label: { fontSize: 15, fontWeight: '600', color: '#374151', marginTop: 10, marginBottom: 4 },
+//   subLabel: { fontSize: 14, fontWeight: '500', color: '#4B5563', marginTop: 8, marginBottom: 4 },
+//   hint: { fontSize: 12, color: '#6B7280', marginBottom: 4, fontStyle: 'italic' },
+//   req: { color: '#EF4444' },
+//   input: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, color: '#1F2937', marginBottom: 8 },
+//   inputErr: { borderColor: '#EF4444' },
+//   errTxt: { color: '#EF4444', fontSize: 12, marginBottom: 8, marginLeft: 4 },
+//   pickerWrap: { backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, marginBottom: 8, overflow: 'hidden' },
+//   picker: { height: 50, width: '100%', color: '#1F2937' },
+//   radioGroup: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+//   radioContainer: { flexDirection: 'row', alignItems: 'center', marginRight: 24, paddingVertical: 8 },
+//   radioButton: { height: 20, width: 20, borderRadius: 10, borderWidth: 2, borderColor: '#9CA3AF', alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+//   radioButtonSelected: { borderColor: '#2563EB' },
+//   radioInner: { height: 10, width: 10, borderRadius: 5, backgroundColor: '#2563EB' },
+//   radioLabel: { fontSize: 15, color: '#374151' },
+//   btnRow: { flexDirection: 'row', gap: 12, marginTop: 32, marginBottom: 16 },
+//   saveBtn: { flex: 2, backgroundColor: '#2563EB', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+//   saveBtnOff: { backgroundColor: '#9CA3AF' },
+//   saveTxt: { color: '#FFF', fontSize: 17, fontWeight: '600' },
+//   cancelBtn: { flex: 1, backgroundColor: '#F1F5F9', paddingVertical: 16, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#E2E8F0' },
+//   cancelTxt: { color: '#64748B', fontSize: 17, fontWeight: '600' },
+//   note: { fontSize: 12, color: '#9CA3AF', textAlign: 'center', marginBottom: 20, lineHeight: 18 },
+// });
+
+// export default PatientMedicalForm;
 import React, { useEffect, useState, useRef } from 'react';
 import {
   ScrollView, StyleSheet, Text, TextInput, View,
@@ -1819,6 +2986,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import ApiService from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
+import { sosService } from '../../services/SOSService';
 
 interface FormValues {
   fullName: string;
@@ -1976,6 +3144,26 @@ const PatientMedicalForm: React.FC<PatientMedicalFormProps> = ({ onSave, onClose
 
   const onSubmit = async (data: FormValues) => {
     setIsSubmitting(true);
+
+    // Validate emergency contact
+    if (!data.emergencyName || !data.emergencyName.trim()) {
+      Alert.alert('Missing Field', 'Emergency contact name is required');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!data.emergencyPhone || !data.emergencyPhone.trim()) {
+      Alert.alert('Missing Field', 'Emergency contact phone number is required');
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (!data.emergencyRelationship || !data.emergencyRelationship.trim()) {
+      Alert.alert('Missing Field', 'Emergency contact relationship is required');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
       const split = (str: string) =>
         str.split(',').map(s => s.trim()).filter(Boolean);
@@ -2038,39 +3226,61 @@ const PatientMedicalForm: React.FC<PatientMedicalFormProps> = ({ onSave, onClose
         completionStatus: { isComplete: true, completionDate: new Date() },
       };
 
+      console.log('🔔 Sending emergency contact to backend:', {
+        name: data.emergencyName,
+        relationship: data.emergencyRelationship,
+        phone: data.emergencyPhone
+      });
+
       const response = await ApiService.submitMedicalForm(formattedData);
 
       if (response?.success) {
         await refreshQRCode();
 
-        Alert.alert(
-          'Success',
-          isEditMode ? 'Medical profile updated successfully!' : 'Medical profile saved successfully!',
-          [{
-            text: 'OK',
-            onPress: async () => {
-              try {
-                if (!isEditMode) {
-                  // Mark first login as complete
-                  await completeFirstLogin();
-                  // Refresh user data to get updated medical form status
-                  await refreshUserData();
-                  // Small delay to ensure state updates
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                }
-                // Call callbacks
-                onSave?.();
-                onClose?.();
-                // Force navigation to dashboard
-                router.replace('/(tabs)/patient-dashboard');
-              } catch (error) {
-                console.error('Navigation error:', error);
-                // Fallback navigation
-                router.replace('/(tabs)/patient-dashboard');
-              }
-            },
-          }],
-        );
+        // 🔔 Setup SOS notification - fire and forget
+        console.log('🔔 Setting up SOS notification...');
+
+        let patientId = userData?.patientId || '';
+        let qrCodeDataUri = '';
+
+        try {
+          const profileRes = await ApiService.getPatientProfile() as any;
+          if (profileRes.success && profileRes.data) {
+            patientId = profileRes.data.patientId || patientId;
+            qrCodeDataUri = profileRes.data.qrCode || '';
+          }
+        } catch (err) {
+          console.log('Could not fetch profile:', err);
+        }
+
+        // Fire and forget - NO ALERT inside SOS service
+        sosService.setupAfterFormSave({
+          patientName: data.fullName,
+          patientId: patientId,
+          bloodGroup: data.bloodGroup,
+          allergies: split(data.medicationAllergies),
+          emergencyName: data.emergencyName,
+          emergencyPhone: data.emergencyPhone,
+          chronicDiseases: split(data.chronicDiseases),
+          isDiabetic: data.isDiabetic,
+          qrCodeDataUri: qrCodeDataUri,
+        }).catch(err => console.log('SOS non-critical error:', err));
+
+        // Update auth state
+        if (!isEditMode) {
+          await completeFirstLogin();
+          await refreshUserData();
+        }
+
+        // Call callbacks
+        onSave?.();
+        onClose?.();
+
+        // DIRECT NAVIGATION - NO ALERT (THIS PREVENTS THE CRASH)
+        setTimeout(() => {
+          router.replace('/(tabs)/patient-dashboard');
+        }, 100);
+
       } else {
         Alert.alert('Error', response?.message || 'Failed to submit. Please try again.');
       }
@@ -2292,17 +3502,27 @@ const PatientMedicalForm: React.FC<PatientMedicalFormProps> = ({ onSave, onClose
           {/* EMERGENCY CONTACT */}
           <Text style={st.sectionTitle}>EMERGENCY CONTACT</Text>
           {[
-            { name: 'emergencyName', label: 'Contact Name', ph: 'Emergency contact name' },
-            { name: 'emergencyRelationship', label: 'Relationship', ph: 'e.g., Spouse, Parent' },
-            { name: 'emergencyPhone', label: 'Phone Number', ph: 'Emergency contact phone', kbType: 'phone-pad' as const },
-          ].map(({ name, label, ph, kbType }) => (
+            { name: 'emergencyName', label: 'Contact Name', ph: 'Emergency contact name', required: true },
+            { name: 'emergencyRelationship', label: 'Relationship', ph: 'e.g., Spouse, Parent', required: true },
+            { name: 'emergencyPhone', label: 'Phone Number', ph: 'Emergency contact phone', kbType: 'phone-pad', required: true },
+          ].map(({ name, label, ph, kbType, required }) => (
             <React.Fragment key={name}>
-              <Text style={st.label}>{label}</Text>
+              <Text style={st.label}>{label}{required && <Text style={{ color: '#EF4444' }}> *</Text>}</Text>
               <Controller control={control} name={name as any}
-                render={({ field: { onChange, value } }) => (
-                  <TextInput style={st.input} placeholder={ph} onChangeText={onChange}
-                    value={value} editable={!isSubmitting} placeholderTextColor="#9CA3AF"
-                    keyboardType={kbType} />
+                rules={required ? { required: `${label} is required` } : {}}
+                render={({ field: { onChange, value }, fieldState: { error } }) => (
+                  <>
+                    <TextInput
+                      style={[st.input, error && st.inputErr]}
+                      placeholder={ph}
+                      onChangeText={onChange}
+                      value={value}
+                      editable={!isSubmitting}
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType={kbType}
+                    />
+                    {error && <Text style={st.errTxt}>{error.message}</Text>}
+                  </>
                 )} />
             </React.Fragment>
           ))}

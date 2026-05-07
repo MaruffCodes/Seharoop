@@ -1066,12 +1066,11 @@
 // export default new ApiService();
 
 //new
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from 'expo-router';
 import { Alert } from "react-native";
 
-export const BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || "http://192.168.1.6:5001";
+export const BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace('/api', '') || "http://192.168.1.4:5001";
 const API_BASE_URL = `${BASE_URL}/api`;
 
 interface ApiResponse<T = any> {
@@ -1115,7 +1114,10 @@ class ApiService {
       let token = null;
       if (requiresAuth) {
         token = await this.getToken();
-        if (!token) { router.replace('/login'); throw new Error('No authentication token'); }
+        if (!token) {
+          router.replace('/login');
+          throw new Error('No authentication token');
+        }
       }
       const config: RequestInit = {
         headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -1146,8 +1148,10 @@ class ApiService {
       if (!response.ok) throw new Error(data.message || `Request failed ${response.status}`);
       return data as T;
     } catch (error: any) {
-      // console.error("API error:", error.message);
-      Alert.alert("Please Fill the form correctly!!");
+      // REMOVED: Alert.alert("Please Fill the form correctly!!");
+      // Only log errors silently, don't show alerts for background API calls
+      console.error(`API Error [${endpoint}]:`, error.message);
+
       if (error.name === 'AbortError') throw new Error(`Request timeout after ${timeout}ms.`);
       if (error.message?.includes('Network') || error.message?.includes('Failed to fetch'))
         throw new Error('Cannot connect to server. Check backend is running.');
