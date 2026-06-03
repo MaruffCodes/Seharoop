@@ -224,6 +224,7 @@ export default function TabLayout() {
         <Tabs.Screen name="patient-search" options={{ href: null }} />
         <Tabs.Screen name="Scanner" options={{ href: null }} />
         <Tabs.Screen name="patient-summary" options={{ href: null }} />
+        <Tabs.Screen name="doctor-edit-profile" options={{ href: null }} />
       </Tabs>
     );
   }
@@ -239,6 +240,10 @@ export default function TabLayout() {
         <Tabs.Screen
           name="patient-search"
           options={{ title: 'Search', tabBarIcon: ({ size, color }) => <Search size={size} color={color} /> }}
+        />
+        <Tabs.Screen
+          name="doctor-edit-profile"
+          options={{ title: 'Profile', tabBarIcon: ({ size, color }) => <User size={size} color={color} /> }}
         />
         {/* Hidden screens */}
         <Tabs.Screen name="patient-dashboard" options={{ href: null }} />

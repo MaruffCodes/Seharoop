@@ -17,7 +17,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.seharoop.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UISupportsDocumentBrowser": true,
+        "LSSupportsOpeningDocumentsInPlace": true
       }
     },
     "android": {
@@ -39,7 +41,8 @@
         "android.permission.READ_MEDIA_AUDIO",
         "android.permission.WAKE_LOCK",
         "android.permission.VIBRATE",
-        "android.permission.RECEIVE_BOOT_COMPLETED"
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.MANAGE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -81,7 +84,13 @@
           "color": "#DC2626"
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-file-system",
+        {
+          "fileSystemPermission": "Allow Seharoop to access files to view medical documents."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

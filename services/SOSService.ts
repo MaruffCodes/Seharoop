@@ -1377,8 +1377,310 @@
 
 // export const sosService = new SOSService();
 // export default sosService;
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { Platform } from 'react-native';
+// import * as Notifications from 'expo-notifications';
+// import * as Device from 'expo-device';
+
+// export const SOS_STORAGE_KEY = 'seharoop_sos_data';
+// export const SOS_NOTIF_ID_KEY = 'seharoop_sos_notif_id';
+
+// export interface SOSData {
+//     patientName: string; patientId: string; bloodGroup: string;
+//     allergies: string[]; emergencyName: string; emergencyPhone: string;
+//     chronicDiseases: string[]; isDiabetic: boolean;
+//     qrCodeData: string; lastUpdated: string;
+// }
+
+// // Set notification handler for when app is in foreground
+// Notifications.setNotificationHandler({
+//     handleNotification: async () => ({
+//         shouldShowAlert: true,
+//         shouldPlaySound: true,
+//         shouldSetBadge: true,
+//     }),
+// });
+
+// class SOSService {
+//     private rescheduleInterval: any = null;
+//     private isPosting = false;
+
+//     async requestPermissions(): Promise<boolean> {
+//         if (!Device.isDevice) {
+//             console.log('Not a physical device - notifications may not work');
+//             return false;
+//         }
+
+//         try {
+//             const { status: existingStatus } = await Notifications.getPermissionsAsync();
+//             let finalStatus = existingStatus;
+
+//             if (existingStatus !== 'granted') {
+//                 const { status } = await Notifications.requestPermissionsAsync();
+//                 finalStatus = status;
+//             }
+
+//             if (finalStatus !== 'granted') {
+//                 console.log('Failed to get notification permissions');
+//                 return false;
+//             }
+
+//             console.log('✅ Notification permissions granted!');
+//             return true;
+//         } catch (error) {
+//             console.error('Permission error:', error);
+//             return false;
+//         }
+//     }
+
+//     async setupAndroidChannel(): Promise<void> {
+//         if (Platform.OS !== 'android') return;
+
+//         try {
+//             await Notifications.deleteNotificationChannelAsync('medical-id').catch(() => { });
+
+//             await Notifications.setNotificationChannelAsync('medical-id', {
+//                 name: '🆘 Medical ID',
+//                 description: 'Emergency medical information on lock screen',
+//                 importance: Notifications.AndroidImportance.MAX,
+//                 lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+//                 sound: 'default',
+//                 vibrationPattern: [0, 250, 250, 250],
+//                 enableLights: true,
+//                 lightColor: '#DC2626',
+//                 bypassDnd: true,
+//                 enableVibration: true,
+//                 showsBadge: true,
+//             });
+
+//             console.log('✅ Android notification channel created with MAX importance');
+//         } catch (error) {
+//             console.error('Failed to setup Android channel:', error);
+//         }
+//     }
+
+//     async saveSOSData(data: SOSData): Promise<void> {
+//         await AsyncStorage.setItem(SOS_STORAGE_KEY, JSON.stringify(data));
+//         console.log('✅ SOS Data saved to storage');
+//     }
+
+//     async loadSOSData(): Promise<SOSData | null> {
+//         try {
+//             const r = await AsyncStorage.getItem(SOS_STORAGE_KEY);
+//             return r ? JSON.parse(r) : null;
+//         } catch { return null; }
+//     }
+
+//     async clearSOSData(): Promise<void> {
+//         try {
+//             await this.cancelMedicalIDNotification();
+//             await AsyncStorage.removeItem(SOS_STORAGE_KEY);
+//             await AsyncStorage.removeItem(SOS_NOTIF_ID_KEY);
+//             console.log('✅ SOS data cleared');
+//         } catch (error) {
+//             console.error('Failed to clear SOS data:', error);
+//         }
+//     }
+
+//     async postMedicalIDNotification(data: SOSData): Promise<void> {
+//         if (this.isPosting) {
+//             console.log('⚠️ Already posting notification, skipping');
+//             return;
+//         }
+
+//         try {
+//             this.isPosting = true;
+//             await this.setupAndroidChannel();
+//             await this.cancelMedicalIDNotification();
+
+//             const hasEmergencyContact = data.emergencyName && data.emergencyName.trim() !== '';
+
+//             const notificationLines = [
+//                 `🩸 Blood Group: ${data.bloodGroup || 'Unknown'}`,
+//                 `🆔 Patient ID: ${data.patientId}`,
+//             ];
+
+//             if (hasEmergencyContact) {
+//                 let emergencyText = `📞 Emergency: ${data.emergencyName}`;
+//                 if (data.emergencyPhone && data.emergencyPhone.trim() !== '') {
+//                     emergencyText += ` — ${data.emergencyPhone}`;
+//                 }
+//                 notificationLines.push(emergencyText);
+//             }
+
+//             if (data.allergies && data.allergies.length > 0) {
+//                 const validAllergies = data.allergies.filter(a => a && a.trim() !== '');
+//                 if (validAllergies.length > 0) {
+//                     notificationLines.push(`⚠️ Allergies: ${validAllergies.slice(0, 3).join(', ')}`);
+//                 }
+//             }
+
+//             const body = notificationLines.filter(Boolean).join('\n');
+
+//             const notificationId = await Notifications.scheduleNotificationAsync({
+//                 content: {
+//                     title: `🆘 Medical ID — ${data.patientName}`,
+//                     body: body,
+//                     subtitle: `ID: ${data.patientId}`,
+//                     data: {
+//                         screen: 'sos-qr',
+//                         patientId: data.patientId,
+//                         patientName: data.patientName,
+//                     },
+//                     color: '#DC2626',
+//                     badge: 1,
+//                     priority: Notifications.AndroidNotificationPriority.MAX,
+//                     ...(Platform.OS === 'android' && {
+//                         sticky: true,
+//                         ongoing: true,
+//                         autoDismiss: false,
+//                         priority: 'max',
+//                         channelId: 'medical-id',
+//                         setOngoing: true,
+//                         setAutoCancel: false,
+//                     }),
+//                 },
+//                 trigger: null,
+//             });
+
+//             await AsyncStorage.setItem(SOS_NOTIF_ID_KEY, notificationId);
+//             console.log('✅ Medical ID notification posted with ID:', notificationId);
+
+//             this.startAutoRepost();
+
+//         } catch (error) {
+//             console.error('Failed to post notification:', error);
+//         } finally {
+//             this.isPosting = false;
+//         }
+//     }
+
+//     private startAutoRepost(): void {
+//         if (this.rescheduleInterval) {
+//             clearInterval(this.rescheduleInterval);
+//         }
+
+//         this.rescheduleInterval = setInterval(async () => {
+//             try {
+//                 const data = await this.loadSOSData();
+//                 if (data && data.patientId) {
+//                     const id = await AsyncStorage.getItem(SOS_NOTIF_ID_KEY);
+//                     if (!id) {
+//                         console.log('🔄 Auto-reposting medical ID notification...');
+//                         await this.postMedicalIDNotification(data);
+//                     }
+//                 }
+//             } catch (err) {
+//                 console.log('Auto-repost error:', err);
+//             }
+//         }, 60000); // Every 60 seconds
+//     }
+
+//     private stopAutoRepost(): void {
+//         if (this.rescheduleInterval) {
+//             clearInterval(this.rescheduleInterval);
+//             this.rescheduleInterval = null;
+//         }
+//     }
+
+//     async cancelMedicalIDNotification(): Promise<void> {
+//         try {
+//             const id = await AsyncStorage.getItem(SOS_NOTIF_ID_KEY);
+//             if (id) {
+//                 await Notifications.dismissNotificationAsync(id).catch(() => { });
+//                 await Notifications.cancelScheduledNotificationAsync(id).catch(() => { });
+//             }
+//             await Notifications.dismissAllNotificationsAsync().catch(() => { });
+//             console.log('✅ Previous notification cancelled');
+//         } catch (error) {
+//             console.error('Failed to cancel notification:', error);
+//         }
+//     }
+
+//     buildSOSData(p: {
+//         patientName: string; patientId: string; bloodGroup: string;
+//         allergies: string[]; emergencyName: string; emergencyPhone: string;
+//         chronicDiseases: string[]; isDiabetic: boolean; qrCodeDataUri: string;
+//     }): SOSData {
+//         return {
+//             patientName: p.patientName,
+//             patientId: p.patientId,
+//             bloodGroup: p.bloodGroup,
+//             allergies: p.allergies || [],
+//             emergencyName: p.emergencyName || '',
+//             emergencyPhone: p.emergencyPhone || '',
+//             chronicDiseases: p.chronicDiseases || [],
+//             isDiabetic: p.isDiabetic || false,
+//             qrCodeData: p.qrCodeDataUri,
+//             lastUpdated: new Date().toISOString()
+//         };
+//     }
+
+//     // SILENT VERSION - No Alerts
+//     async setupAfterFormSave(params: {
+//         patientName: string; patientId: string; bloodGroup: string;
+//         allergies: string[]; emergencyName: string; emergencyPhone: string;
+//         chronicDiseases: string[]; isDiabetic: boolean; qrCodeDataUri: string;
+//     }): Promise<boolean> {
+//         try {
+//             console.log('🔔 SOS: Starting notification setup...');
+//             console.log('🔔 Patient:', params.patientName);
+//             console.log('🔔 Patient ID:', params.patientId);
+//             console.log('🔔 Emergency Contact:', params.emergencyName || '(Not provided)');
+
+//             const sosData = this.buildSOSData(params);
+//             await this.saveSOSData(sosData);
+
+//             const granted = await this.requestPermissions();
+//             console.log('🔔 Permission granted?', granted);
+
+//             if (granted) {
+//                 await this.postMedicalIDNotification(sosData);
+//                 console.log('🔔 Notification posted successfully!');
+//             }
+//             return true;
+//         } catch (error) {
+//             console.error('🔔 SOS setup error:', error);
+//             return false;
+//         }
+//     }
+
+//     async restoreNotificationAfterLogin(): Promise<void> {
+//         console.log('🔔 Restoring notification after login...');
+//         const data = await this.loadSOSData();
+//         if (data && data.patientId) {
+//             console.log('🔔 Found existing SOS data for patient:', data.patientName);
+//             const granted = await this.requestPermissions();
+//             if (granted) {
+//                 await this.postMedicalIDNotification(data);
+//                 console.log('🔔 Notification restored successfully');
+//             }
+//         } else {
+//             console.log('🔔 No existing SOS data found');
+//             this.stopAutoRepost();
+//         }
+//     }
+
+//     async refreshNotification(): Promise<void> {
+//         const data = await this.loadSOSData();
+//         if (data) {
+//             await this.postMedicalIDNotification(data);
+//         }
+//     }
+
+//     async onLogout(): Promise<void> {
+//         this.stopAutoRepost();
+//         await this.clearSOSData();
+//     }
+// }
+
+// export const sosService = new SOSService();
+// export default sosService;
+
+
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 
@@ -1392,7 +1694,7 @@ export interface SOSData {
     qrCodeData: string; lastUpdated: string;
 }
 
-// Set notification handler for when app is in foreground
+// Set notification handler
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
         shouldShowAlert: true,
@@ -1404,6 +1706,20 @@ Notifications.setNotificationHandler({
 class SOSService {
     private rescheduleInterval: any = null;
     private isPosting = false;
+    private appState = AppState.currentState;
+
+    constructor() {
+        // Listen for app state changes to repost notification when app comes to foreground
+        AppState.addEventListener('change', this.handleAppStateChange);
+    }
+
+    private handleAppStateChange = (nextAppState: string) => {
+        if (nextAppState === 'active' && this.appState !== 'active') {
+            console.log('🔄 App came to foreground, restoring notification...');
+            this.restoreNotificationAfterLogin();
+        }
+        this.appState = nextAppState;
+    };
 
     async requestPermissions(): Promise<boolean> {
         if (!Device.isDevice) {
@@ -1442,7 +1758,7 @@ class SOSService {
             await Notifications.setNotificationChannelAsync('medical-id', {
                 name: '🆘 Medical ID',
                 description: 'Emergency medical information on lock screen',
-                importance: Notifications.AndroidImportance.MAX,
+                importance: Notifications.AndroidImportance.HIGH,
                 lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
                 sound: 'default',
                 vibrationPattern: [0, 250, 250, 250],
@@ -1453,7 +1769,7 @@ class SOSService {
                 showsBadge: true,
             });
 
-            console.log('✅ Android notification channel created with MAX importance');
+            console.log('✅ Android notification channel created');
         } catch (error) {
             console.error('Failed to setup Android channel:', error);
         }
@@ -1473,6 +1789,7 @@ class SOSService {
 
     async clearSOSData(): Promise<void> {
         try {
+            this.stopRescheduleTimer();
             await this.cancelMedicalIDNotification();
             await AsyncStorage.removeItem(SOS_STORAGE_KEY);
             await AsyncStorage.removeItem(SOS_NOTIF_ID_KEY);
@@ -1529,15 +1846,13 @@ class SOSService {
                     },
                     color: '#DC2626',
                     badge: 1,
-                    priority: Notifications.AndroidNotificationPriority.MAX,
+                    priority: Notifications.AndroidNotificationPriority.HIGH,
                     ...(Platform.OS === 'android' && {
                         sticky: true,
                         ongoing: true,
                         autoDismiss: false,
-                        priority: 'max',
+                        priority: 'high',
                         channelId: 'medical-id',
-                        setOngoing: true,
-                        setAutoCancel: false,
                     }),
                 },
                 trigger: null,
@@ -1546,7 +1861,8 @@ class SOSService {
             await AsyncStorage.setItem(SOS_NOTIF_ID_KEY, notificationId);
             console.log('✅ Medical ID notification posted with ID:', notificationId);
 
-            this.startAutoRepost();
+            // Start the reschedule timer
+            this.startRescheduleTimer();
 
         } catch (error) {
             console.error('Failed to post notification:', error);
@@ -1555,31 +1871,31 @@ class SOSService {
         }
     }
 
-    private startAutoRepost(): void {
-        if (this.rescheduleInterval) {
-            clearInterval(this.rescheduleInterval);
-        }
+    // 🔄 Timer that reposts notification every 30 seconds
+    private startRescheduleTimer(): void {
+        this.stopRescheduleTimer();
 
         this.rescheduleInterval = setInterval(async () => {
             try {
                 const data = await this.loadSOSData();
                 if (data && data.patientId) {
-                    const id = await AsyncStorage.getItem(SOS_NOTIF_ID_KEY);
-                    if (!id) {
-                        console.log('🔄 Auto-reposting medical ID notification...');
-                        await this.postMedicalIDNotification(data);
-                    }
+                    console.log('🔄 Timer: Reposting Medical ID notification...');
+                    await this.postMedicalIDNotification(data);
+                } else {
+                    console.log('🔄 Timer: No SOS data found, stopping timer');
+                    this.stopRescheduleTimer();
                 }
-            } catch (err) {
-                console.log('Auto-repost error:', err);
+            } catch (error) {
+                console.error('Timer repost error:', error);
             }
-        }, 60000); // Every 60 seconds
+        }, 30000); // Every 30 seconds
     }
 
-    private stopAutoRepost(): void {
+    private stopRescheduleTimer(): void {
         if (this.rescheduleInterval) {
             clearInterval(this.rescheduleInterval);
             this.rescheduleInterval = null;
+            console.log('⏹️ Timer stopped');
         }
     }
 
@@ -1616,7 +1932,6 @@ class SOSService {
         };
     }
 
-    // SILENT VERSION - No Alerts
     async setupAfterFormSave(params: {
         patientName: string; patientId: string; bloodGroup: string;
         allergies: string[]; emergencyName: string; emergencyPhone: string;
@@ -1650,6 +1965,7 @@ class SOSService {
         const data = await this.loadSOSData();
         if (data && data.patientId) {
             console.log('🔔 Found existing SOS data for patient:', data.patientName);
+            console.log('🔔 Emergency Contact:', data.emergencyName || '(Not set)');
             const granted = await this.requestPermissions();
             if (granted) {
                 await this.postMedicalIDNotification(data);
@@ -1657,7 +1973,7 @@ class SOSService {
             }
         } else {
             console.log('🔔 No existing SOS data found');
-            this.stopAutoRepost();
+            this.stopRescheduleTimer();
         }
     }
 
@@ -1669,7 +1985,7 @@ class SOSService {
     }
 
     async onLogout(): Promise<void> {
-        this.stopAutoRepost();
+        this.stopRescheduleTimer();
         await this.clearSOSData();
     }
 }

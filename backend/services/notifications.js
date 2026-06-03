@@ -6,7 +6,7 @@ export const fetchNotifications = async (token) => {
   }
 
   try {
-    const response = await fetch('http://192.168.1.4:5001/api/patient/notifications', {
+    const response = await fetch('http://192.168.1.6:5001/api/patient/notifications', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
